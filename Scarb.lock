@@ -14,9 +14,9 @@ source = "git+https://github.com/EkuboProtocol/abis#edb6de8c9baf515f1053bbab3d86
 
 [[package]]
 name = "opus"
-version = "1.0.3"
+version = "1.2.0"
 source = "registry+https://scarbs.xyz/"
-checksum = "sha256:f8f67a67633e535a9b16ddfd983c64b44e2b61bf57fe51228521e0c686e06abc"
+checksum = "sha256:a3ce3b58ddfd01d1755e3091e25ba39a0db7c23e45f3402bb131df4e3e36fcc1"
 dependencies = [
  "wadray",
 ]
@@ -34,15 +34,15 @@ dependencies = [
 
 [[package]]
 name = "snforge_scarb_plugin"
-version = "0.35.0"
+version = "0.41.0"
 source = "registry+https://scarbs.xyz/"
-checksum = "sha256:20bd6a488fda7201ce2a5fd680d8e715b10e3545147b276747ad079c96c3d5d2"
+checksum = "sha256:7228a3ea74d8decfb2294cee9251b537bbd58b3e243e9327f55e72a99ab5fb53"
 
 [[package]]
 name = "snforge_std"
-version = "0.35.0"
+version = "0.41.0"
 source = "registry+https://scarbs.xyz/"
-checksum = "sha256:fe4e1b1526c815441183baed7f93e73bc76a6393d23e1f9c34fbe227bfaedfd6"
+checksum = "sha256:edf116cbf62cbe2487f188cf28ceb9f42b08cfa14e197524281c3ce932f4a5e6"
 dependencies = [
  "snforge_scarb_plugin",
 ]
