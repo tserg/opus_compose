@@ -11,7 +11,8 @@ pub mod stabilizer {
     use opus_compose::interfaces::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use opus_compose::stabilizer::interfaces::stabilizer::IStabilizer;
     use opus_compose::stabilizer::math::{get_cumulative_delta, get_accumulated_yin};
-    use opus_compose::stabilizer::types::{Stake, StorageBounds, StoragePoolKey, YieldState};
+    use opus_compose::stabilizer::types::{Stake, YieldState};
+    use opus_compose::types::{StorageBounds, StoragePoolKey};
     use starknet::{ContractAddress, get_caller_address, get_contract_address};
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,

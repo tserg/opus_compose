@@ -1,4 +1,14 @@
 pub mod addresses;
+pub mod types;
+pub mod cultivator {
+    pub mod contracts {
+        pub mod cultivator;
+    }
+    pub mod interfaces {
+        pub mod cultivator;
+    }
+    pub mod types;
+}
 pub mod interfaces {
     pub mod erc20;
 }
