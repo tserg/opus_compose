@@ -24,10 +24,8 @@ pub mod cultivator {
     use wadray::WAD_ONE;
 
     //
-    // Constants/
+    // Constants
     ///
-
-    const LOOP_START: u64 = 1;
 
     pub const TWAP_ORDER_PERIOD: u64 = 24 * 60 * 60; // 24 hours
     pub const YIN_CULTIVATE_THRESHOLD: u128 = 10 * WAD_ONE;
@@ -247,7 +245,7 @@ pub mod cultivator {
             let seed: Seed = self.seeds.read(asset_id).into();
 
             let zero_seed: Seed = Default::default();
-            assert!(seed != zero_seed, "CUL: No seed for asset");
+            assert!(seed.token_id.is_non_zero(), "CUL: No seed for asset");
 
             // Update storage
             self.seeds.write(asset_id, zero_seed.into());
@@ -351,7 +349,6 @@ pub mod cultivator {
                 contract_address: ekubo_positions.contract_address,
             };
 
-            // TODO: can this clear be skipped?
             ekubo_positions_clear
                 .clear(EkuboERC20Dispatcher { contract_address: yin.contract_address });
             ekubo_positions_clear
