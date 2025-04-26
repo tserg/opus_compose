@@ -5,7 +5,7 @@ pub mod cultivator {
     use core::num::traits::Zero;
     use ekubo::components::clear::{IClearDispatcher, IClearDispatcherTrait};
     use ekubo::interfaces::core::{ICoreDispatcher, ICoreDispatcherTrait};
-    use ekubo::interfaces::erc20::{IERC20Dispatcher as EkuboERC20Dispatcher};
+    use ekubo::interfaces::erc20::IERC20Dispatcher as EkuboERC20Dispatcher;
     use ekubo::interfaces::erc721::{IERC721Dispatcher, IERC721DispatcherTrait};
     use ekubo::interfaces::extensions::twamm::{OrderInfo, OrderKey};
     use ekubo::interfaces::positions::{
@@ -78,6 +78,8 @@ pub mod cultivator {
         AccessControlEvent: access_control_component::Event,
         Cultivate: Cultivate,
         Extract: Extract,
+        OrderPlaced: OrderPlaced,
+        OrderClosed: OrderClosed,
         Plant: Plant,
         Prune: Prune,
     }
@@ -86,7 +88,7 @@ pub mod cultivator {
     pub struct Cultivate {
         #[key]
         pub asset: ContractAddress,
-        pub seed: Seed
+        pub seed: Seed,
     }
 
 
@@ -97,6 +99,24 @@ pub mod cultivator {
         #[key]
         pub asset: ContractAddress,
         pub amount: u256,
+    }
+
+    #[derive(Copy, Drop, starknet::Event, PartialEq)]
+    pub struct OrderPlaced {
+        #[key]
+        pub asset: ContractAddress,
+        pub order_id: u64,
+        pub fee: u128,
+        pub end_time: u64,
+    }
+
+    #[derive(Copy, Drop, starknet::Event, PartialEq)]
+    pub struct OrderClosed {
+        #[key]
+        pub asset: ContractAddress,
+        pub order_id: u64,
+        pub fee: u128,
+        pub end_time: u64,
     }
 
     #[derive(Copy, Drop, starknet::Event, PartialEq)]
@@ -150,7 +170,7 @@ pub mod cultivator {
                 let seed: Seed = self.seeds.read(idx).into();
                 if seed.token_id.is_non_zero() {
                     assets.append(self.get_asset_from_seed(seed));
-                }                
+                }
                 idx -= 1;
             }
             assets.span()
@@ -251,7 +271,6 @@ pub mod cultivator {
                 let seed: Seed = self.seeds.read(asset_id).into();
                 assert!(seed.token_id.is_non_zero(), "CUL: No seed for asset");
                 (asset_id, asset, seed)
-
             } else {
                 let mut asset_id: u64 = Zero::zero();
                 let mut asset: ContractAddress = Zero::zero();
@@ -277,7 +296,6 @@ pub mod cultivator {
                 return;
             }
 
-
             let cultivator = get_contract_address();
             let yin = self.yin.read();
             let asset_erc20 = IERC20Dispatcher { contract_address: asset };
@@ -285,11 +303,7 @@ pub mod cultivator {
             let ekubo_positions = self.ekubo_positions.read();
 
             // Collect accrued LP fees
-            ekubo_core.collect_fees(
-                seed.pool_key,
-                seed.token_id.into(),
-                seed.bounds,
-            );
+            ekubo_core.collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
 
             // Withdraw any existing TWAP orders
             let mut can_create_new_order: bool = true;
@@ -303,48 +317,66 @@ pub mod cultivator {
                     end_time: existing_order.end_time,
                 };
 
-                ekubo_positions.withdraw_proceeds_from_sale_to_self(
-                    existing_order.order_id, existing_order_key
-                );
+                ekubo_positions
+                    .withdraw_proceeds_from_sale_to_self(
+                        existing_order.order_id, existing_order_key,
+                    );
 
                 // Reset the order if it is completed
-                let order_info: OrderInfo = ekubo_positions.get_order_info(
-                    existing_order.order_id,
-                    existing_order_key
-                );
-                if order_info.remaining_sell_amount != 0 {
+                let order_info: OrderInfo = ekubo_positions
+                    .get_order_info(existing_order.order_id, existing_order_key);
+                if order_info.remaining_sell_amount == 0 {
+                    self.twamm_orders.write(asset_id, Default::default());
+                    self
+                        .emit(
+                            OrderClosed {
+                                asset,
+                                order_id: existing_order.order_id,
+                                fee: existing_order_key.fee,
+                                end_time: existing_order_key.end_time,
+                            },
+                        );
+                } else {
                     can_create_new_order = false;
                 }
             }
 
             // Provide liquidity
             yin.transfer(ekubo_positions.contract_address, yin.balance_of(cultivator));
-            asset_erc20.transfer(ekubo_positions.contract_address, asset_erc20.balance_of(cultivator));
+            asset_erc20
+                .transfer(ekubo_positions.contract_address, asset_erc20.balance_of(cultivator));
 
             ekubo_positions.deposit(seed.token_id, seed.pool_key, seed.bounds, 1);
-            let ekubo_positions_clear = IClearDispatcher { contract_address: ekubo_positions.contract_address };
+            let ekubo_positions_clear = IClearDispatcher {
+                contract_address: ekubo_positions.contract_address,
+            };
 
             // TODO: can this clear be skipped?
-            ekubo_positions_clear.clear(EkuboERC20Dispatcher { contract_address: yin.contract_address });
-            ekubo_positions_clear.clear(EkuboERC20Dispatcher { contract_address: asset_erc20.contract_address });
+            ekubo_positions_clear
+                .clear(EkuboERC20Dispatcher { contract_address: yin.contract_address });
+            ekubo_positions_clear
+                .clear(EkuboERC20Dispatcher { contract_address: asset_erc20.contract_address });
 
             // Create a TWAP order for leftover yin if there is no existing TWAP order
             let yin_balance = yin.balance_of(cultivator);
             if yin_balance > YIN_CULTIVATE_THRESHOLD.into() && can_create_new_order {
                 yin.transfer(ekubo_positions.contract_address, yin_balance);
                 let end_time: u64 = ts + TWAP_ORDER_PERIOD;
-                let (order_id, sale_rate) = ekubo_positions.mint_and_increase_sell_amount(
-                    OrderKey {
-                        sell_token: yin.contract_address,
-                        buy_token: asset,
-                        fee: seed.pool_key.fee,
-                        start_time: 0,
-                        end_time,
-                    },
-                    yin_balance.try_into().unwrap(),
-                );
+                let (order_id, sale_rate) = ekubo_positions
+                    .mint_and_increase_sell_amount(
+                        OrderKey {
+                            sell_token: yin.contract_address,
+                            buy_token: asset,
+                            fee: seed.pool_key.fee,
+                            start_time: 0,
+                            end_time,
+                        },
+                        yin_balance.try_into().unwrap(),
+                    );
 
                 self.twamm_orders.write(asset_id, Order { order_id, sale_rate, end_time });
+
+                self.emit(OrderPlaced { asset, order_id, fee: seed.pool_key.fee, end_time });
             }
 
             self.emit(Cultivate { asset, seed });
@@ -359,17 +391,13 @@ pub mod cultivator {
             while idx != 0 {
                 let seed: Seed = self.seeds.read(idx).into();
                 if seed.token_id.is_non_zero() {
-                    ekubo_core.collect_fees(
-                        seed.pool_key,
-                        seed.token_id.into(),
-                        seed.bounds,
-                    );
-                }                
+                    ekubo_core.collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
+                }
                 idx -= 1;
             }
         }
 
-    // Transfer the contract's balance for a specific asset to the caller
+        // Transfer the contract's balance for a specific asset to the caller
         fn extract(ref self: ContractState, asset: ContractAddress) {
             self.access_control.assert_has_role(cultivator_roles::EXTRACT);
 
@@ -388,7 +416,7 @@ pub mod cultivator {
         fn get_asset_from_seed(self: @ContractState, seed: Seed) -> ContractAddress {
             let yin: ContractAddress = self.yin.read().contract_address;
             if seed.pool_key.token0 == yin {
-                seed.pool_key.token1 
+                seed.pool_key.token1
             } else {
                 seed.pool_key.token0
             }

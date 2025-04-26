@@ -23,10 +23,7 @@ pub impl DefaultSeed of Default<Seed> {
                 tick_spacing: Zero::zero(),
                 extension: Zero::zero(),
             },
-            bounds: Bounds {
-                lower: Zero::zero(),
-                upper: Zero::zero(),
-            }
+            bounds: Bounds { lower: Zero::zero(), upper: Zero::zero() },
         }
     }
 }
@@ -52,7 +49,7 @@ pub impl SeedIntoStorageSeed of Into<Seed, StorageSeed> {
     }
 }
 
-#[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]
+#[derive(Copy, Drop, Default, Serde, PartialEq, starknet::Store)]
 pub struct Order {
     pub order_id: u64,
     pub sale_rate: u128,
