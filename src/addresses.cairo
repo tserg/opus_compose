@@ -1,5 +1,5 @@
 pub mod mainnet {
-    use starknet::{contract_address_const, ContractAddress};
+    use starknet::{ContractAddress, contract_address_const};
 
     pub fn admin() -> ContractAddress {
         contract_address_const::<

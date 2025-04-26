@@ -7,20 +7,18 @@ pub mod stabilizer_utils {
     use ekubo::types::bounds::Bounds;
     use ekubo::types::keys::PoolKey;
     use opus::interfaces::{
-        IAllocatorDispatcher, IAllocatorDispatcherTrait, IShrineDispatcher, IShrineDispatcherTrait,
-        IEqualizerDispatcher, IEqualizerDispatcherTrait,
+        IAllocatorDispatcher, IAllocatorDispatcherTrait, IEqualizerDispatcher,
+        IEqualizerDispatcherTrait, IShrineDispatcher, IShrineDispatcherTrait,
     };
     use opus_compose::addresses::mainnet;
-    use opus_compose::stabilizer::constants::{POOL_KEY, BOUNDS};
+    use opus_compose::stabilizer::constants::{BOUNDS, POOL_KEY};
     use opus_compose::stabilizer::interfaces::stabilizer::{
         IStabilizerDispatcher, IStabilizerDispatcherTrait,
     };
-    use opus_compose::stabilizer::periphery::frontend_data_provider::{
-        IFrontendDataProviderDispatcher,
-    };
+    use opus_compose::stabilizer::periphery::frontend_data_provider::IFrontendDataProviderDispatcher;
     use snforge_std::{
-        declare, cheat_caller_address, CheatSpan, ContractClass, ContractClassTrait,
-        DeclareResultTrait, start_cheat_caller_address, stop_cheat_caller_address,
+        CheatSpan, ContractClass, ContractClassTrait, DeclareResultTrait, cheat_caller_address,
+        declare, start_cheat_caller_address, stop_cheat_caller_address,
     };
     use starknet::{ContractAddress, contract_address_const};
     use wadray::{RAY_ONE, Wad};
@@ -108,7 +106,7 @@ pub mod stabilizer_utils {
                 },
                 Option::None => { break; },
             };
-        };
+        }
 
         users
     }

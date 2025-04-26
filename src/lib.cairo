@@ -7,6 +7,7 @@ pub mod cultivator {
     pub mod interfaces {
         pub mod cultivator;
     }
+    pub mod roles;
     pub mod types;
 }
 pub mod interfaces {

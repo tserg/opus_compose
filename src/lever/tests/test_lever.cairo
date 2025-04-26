@@ -18,14 +18,15 @@ use opus_compose::lever::tests::malicious_lever::{
     IMaliciousLeverDispatcher, IMaliciousLeverDispatcherTrait,
 };
 use opus_compose::lever::types::{
-    LeverUpParams, LeverDownParams, ModifyLeverAction, ModifyLeverParams,
+    LeverDownParams, LeverUpParams, ModifyLeverAction, ModifyLeverParams,
 };
 use snforge_std::{
-    declare, ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, spy_events, CheatSpan,
-    cheat_caller_address, start_cheat_caller_address, stop_cheat_caller_address,
+    CheatSpan, ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait,
+    cheat_caller_address, declare, spy_events, start_cheat_caller_address,
+    stop_cheat_caller_address,
 };
 use starknet::{ContractAddress, contract_address_const};
-use wadray::{Ray, RAY_ONE, Wad, WAD_ONE};
+use wadray::{RAY_ONE, Ray, WAD_ONE, Wad};
 
 //
 // Helpers

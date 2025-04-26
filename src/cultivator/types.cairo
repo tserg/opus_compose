@@ -1,17 +1,60 @@
+use core::num::traits::Zero;
 use ekubo::types::bounds::Bounds;
+use ekubo::types::i129::i129;
 use ekubo::types::keys::PoolKey;
 use opus_compose::types::{StorageBounds, StoragePoolKey};
+use starknet::ContractAddress;
 
-#[derive(Copy, Drop, Serde, Debug, PartialEq)]
+#[derive(Copy, Drop, Serde, PartialEq)]
 pub struct Seed {
-    token_id: u64,
-    pool_key: PoolKey,
-    bounds: Bounds,
+    pub token_id: u64,
+    pub pool_key: PoolKey,
+    pub bounds: Bounds,
 }
 
-#[derive(Copy, Drop, Serde, Debug, PartialEq, starknet::Store)]
+pub impl DefaultSeed of Default<Seed> {
+    fn default() -> Seed {
+        Seed {
+            token_id: Zero::zero(),
+            pool_key: PoolKey {
+                token0: Zero::zero(),
+                token1: Zero::zero(),
+                fee: Zero::zero(),
+                tick_spacing: Zero::zero(),
+                extension: Zero::zero(),
+            },
+            bounds: Bounds {
+                lower: Zero::zero(),
+                upper: Zero::zero(),
+            }
+        }
+    }
+}
+
+#[derive(Copy, Drop, Serde, starknet::Store)]
 pub struct StorageSeed {
-    token_id: u64,
-    pool_key: StoragePoolKey,
-    bounds: StorageBounds,
+    pub token_id: u64,
+    pub pool_key: StoragePoolKey,
+    pub bounds: StorageBounds,
+}
+
+pub impl StorageSeedIntoSeed of Into<StorageSeed, Seed> {
+    fn into(self: StorageSeed) -> Seed {
+        Seed { token_id: self.token_id, pool_key: self.pool_key.into(), bounds: self.bounds.into() }
+    }
+}
+
+pub impl SeedIntoStorageSeed of Into<Seed, StorageSeed> {
+    fn into(self: Seed) -> StorageSeed {
+        StorageSeed {
+            token_id: self.token_id, pool_key: self.pool_key.into(), bounds: self.bounds.into(),
+        }
+    }
+}
+
+#[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]
+pub struct Order {
+    pub order_id: u64,
+    pub sale_rate: u128,
+    pub end_time: u64,
 }

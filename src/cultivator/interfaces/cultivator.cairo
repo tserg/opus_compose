@@ -9,6 +9,7 @@ pub trait ICultivator<TContractState> {
     // Getters
     //
 
+    // Returns a list of assets with active positions
     fn get_assets(self: @TContractState) -> Span<ContractAddress>;
     fn get_seed(self: @TContractState, asset: ContractAddress) -> Seed;
 
@@ -22,8 +23,8 @@ pub trait ICultivator<TContractState> {
     // TODO: should there be an option to choose a specific pool to compound?
     fn cultivate(ref self: TContractState, asset: Option<ContractAddress>);
 
-    // Withdraw LP fees for all LPs
-    fn withdraw_lp_fees(ref self: TContractState);
+    // Withdraw all LP fees to the contract
+    fn collect(ref self: TContractState);
     // Transfer a specific asset
     fn extract(ref self: TContractState, asset: ContractAddress);
 }

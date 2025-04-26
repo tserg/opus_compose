@@ -3,27 +3,27 @@ use ekubo::interfaces::erc721::{IERC721Dispatcher, IERC721DispatcherTrait};
 use ekubo::types::bounds::Bounds;
 use ekubo::types::i129::i129;
 use opus::interfaces::{
-    IShrineDispatcher, IShrineDispatcherTrait, IEqualizerDispatcher, IEqualizerDispatcherTrait,
+    IEqualizerDispatcher, IEqualizerDispatcherTrait, IShrineDispatcher, IShrineDispatcherTrait,
 };
 use opus::utils::assert_equalish;
 use opus_compose::addresses::mainnet;
 use opus_compose::interfaces::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
-use opus_compose::stabilizer::constants::{BOUNDS, LOWER_TICK_MAG, UPPER_TICK_MAG, POOL_KEY};
+use opus_compose::stabilizer::constants::{BOUNDS, LOWER_TICK_MAG, POOL_KEY, UPPER_TICK_MAG};
 use opus_compose::stabilizer::contracts::stabilizer::stabilizer as stabilizer_contract;
 use opus_compose::stabilizer::interfaces::stabilizer::IStabilizerDispatcherTrait;
 use opus_compose::stabilizer::math::get_cumulative_delta;
 use opus_compose::stabilizer::periphery::frontend_data_provider::IFrontendDataProviderDispatcherTrait;
-use opus_compose::stabilizer::types::{Stake, YieldState};
 use opus_compose::stabilizer::tests::utils::stabilizer_utils::{
-    create_surplus, create_ekubo_position, create_valid_ekubo_position, fund_three_users, setup,
-    stake_ekubo_position, StabilizerTestConfig, USDC_DECIMALS_DIFF_SCALE,
+    StabilizerTestConfig, USDC_DECIMALS_DIFF_SCALE, create_ekubo_position, create_surplus,
+    create_valid_ekubo_position, fund_three_users, setup, stake_ekubo_position,
 };
+use opus_compose::stabilizer::types::{Stake, YieldState};
 use snforge_std::{
-    declare, DeclareResultTrait, start_cheat_caller_address, stop_cheat_caller_address, spy_events,
-    EventSpyAssertionsTrait,
+    DeclareResultTrait, EventSpyAssertionsTrait, declare, spy_events, start_cheat_caller_address,
+    stop_cheat_caller_address,
 };
 use starknet::contract_address_const;
-use wadray::{Wad, WAD_ONE};
+use wadray::{WAD_ONE, Wad};
 
 
 #[test]
@@ -644,7 +644,7 @@ fn test_multi_users() {
             },
             Option::None => { break; },
         };
-    };
+    }
 
     let pool_info = fdp.get_pool_info(stabilizer.contract_address);
     // Sanity check that the pool does not consist entirely of one token

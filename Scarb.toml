@@ -7,7 +7,7 @@ edition = "2024_07"
 
 [dependencies]
 starknet = ">= 2.11.4"
-ekubo = { git = "https://github.com/EkuboProtocol/abis", commit = "edb6de8c9baf515f1053bbab3d86825d54a63bc3" }
+ekubo = { git = "https://github.com/EkuboProtocol/abis", commit = "7a24eedf68318a46c726d257ad94692d0c7f4191" }
 opus = ">= 1.2.0"
 access_control = ">= 0.4.0"
 wadray = ">= 0.5.0"

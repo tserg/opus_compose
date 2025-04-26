@@ -1,7 +1,7 @@
 use opus_compose::addresses::mainnet;
-use opus_compose::stabilizer::constants::{POOL_KEY, BOUNDS};
+use opus_compose::stabilizer::constants::{BOUNDS, POOL_KEY};
 use sncast_std::{
-    declare, DeclareResultTrait, deploy, FeeSettings, EthFeeSettings, DisplayContractAddress,
+    DeclareResultTrait, DisplayContractAddress, EthFeeSettings, FeeSettings, declare, deploy,
 };
 
 fn main() {

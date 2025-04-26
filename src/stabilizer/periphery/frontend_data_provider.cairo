@@ -34,13 +34,13 @@ pub trait IFrontendDataProvider<TContractState> {
 
 #[starknet::contract]
 pub mod stabilizer_fdp {
-    use core::num::traits::{WideMul, Zero};
     use core::integer::{u512, u512_safe_div_rem_by_u256};
+    use core::num::traits::{WideMul, Zero};
     use ekubo::interfaces::core::{ICoreDispatcher, ICoreDispatcherTrait};
     use ekubo::interfaces::mathlib::{IMathLibDispatcherTrait, dispatcher as mathlib};
     use ekubo::types::bounds::Bounds;
     use ekubo::types::keys::PoolKey;
-    use ekubo::types::pool_price::{PoolPrice};
+    use ekubo::types::pool_price::PoolPrice;
     use opus::utils::math::convert_ekubo_oracle_price_to_wad;
     use opus_compose::addresses::mainnet;
     use opus_compose::interfaces::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
@@ -49,8 +49,8 @@ pub mod stabilizer_fdp {
     };
     use opus_compose::stabilizer::types::PoolInfo;
     use starknet::ContractAddress;
+    use wadray::{Ray, WAD_DECIMALS, Wad, rmul_wr};
     use super::{IFrontendDataProvider, IOracleDispatcher, IOracleDispatcherTrait};
-    use wadray::{rmul_wr, Wad, WAD_DECIMALS, Ray};
 
     const TWO_POW_128: u256 = 0x100000000000000000000000000000000;
     const TWAP_PERIOD: u64 = 5 * 60; // 5 minutes x 60s

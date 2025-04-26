@@ -1,6 +1,6 @@
 use opus_compose::addresses::mainnet;
 use sncast_std::{
-    declare, DeclareResultTrait, deploy, FeeSettings, EthFeeSettings, DisplayContractAddress,
+    DeclareResultTrait, DisplayContractAddress, EthFeeSettings, FeeSettings, declare, deploy,
 };
 
 fn main() {
