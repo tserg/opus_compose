@@ -11,8 +11,7 @@ pub mod cultivator {
     use ekubo::interfaces::positions::{
         GetTokenInfoResult, IPositionsDispatcher, IPositionsDispatcherTrait,
     };
-    use ekubo::interfaces::router::{IRouterDispatcher, IRouterDispatcherTrait, TokenAmount};
-    use ekubo::types::i129::i129;
+    use ekubo::types::delta::Delta;
     use opus_compose::cultivator::interfaces::cultivator::ICultivator;
     use opus_compose::cultivator::roles::cultivator_roles;
     use opus_compose::cultivator::types::{Order, Seed, StorageSeed};
@@ -56,7 +55,6 @@ pub mod cultivator {
         access_control: access_control_component::Storage,
         yin: IERC20Dispatcher,
         ekubo_core: ICoreDispatcher,
-        ekubo_router: IRouterDispatcher,
         ekubo_positions: IPositionsDispatcher,
         ekubo_positions_nft: IERC721Dispatcher,
         assets_count: u64,
@@ -76,6 +74,7 @@ pub mod cultivator {
     #[derive(Copy, Drop, starknet::Event, PartialEq)]
     pub enum Event {
         AccessControlEvent: access_control_component::Event,
+        Collect: Collect,
         Cultivate: Cultivate,
         Extract: Extract,
         OrderPlaced: OrderPlaced,
@@ -91,6 +90,12 @@ pub mod cultivator {
         pub seed: Seed,
     }
 
+    #[derive(Copy, Drop, starknet::Event, PartialEq)]
+    pub struct Collect {
+        #[key]
+        pub asset: ContractAddress,
+        pub delta: Delta,
+    }
 
     #[derive(Copy, Drop, starknet::Event, PartialEq)]
     pub struct Extract {
@@ -143,7 +148,6 @@ pub mod cultivator {
         admin: ContractAddress,
         yin: ContractAddress,
         ekubo_core: ContractAddress,
-        ekubo_router: ContractAddress,
         ekubo_positions: ContractAddress,
         ekubo_positions_nft: ContractAddress,
     ) {
@@ -151,7 +155,6 @@ pub mod cultivator {
 
         self.yin.write(IERC20Dispatcher { contract_address: yin });
         self.ekubo_core.write(ICoreDispatcher { contract_address: ekubo_core });
-        self.ekubo_router.write(IRouterDispatcher { contract_address: ekubo_router });
         self.ekubo_positions.write(IPositionsDispatcher { contract_address: ekubo_positions });
         self.ekubo_positions_nft.write(IERC721Dispatcher { contract_address: ekubo_positions_nft });
     }
@@ -249,8 +252,6 @@ pub mod cultivator {
             // Update storage
             self.seeds.write(asset_id, zero_seed.into());
 
-            // Transfer position NFT
-            let cultivator = get_contract_address();
             // Transfer NFT to user
             self
                 .ekubo_positions_nft
@@ -299,12 +300,11 @@ pub mod cultivator {
             let cultivator = get_contract_address();
             let yin = self.yin.read();
             let asset_erc20 = IERC20Dispatcher { contract_address: asset };
-            let ekubo_core = self.ekubo_core.read();
             let ekubo_positions = self.ekubo_positions.read();
 
             // Collect accrued LP fees
-            ekubo_core.collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
-
+            self.collect_fees_helper(seed);
+            
             // Withdraw any existing TWAP orders
             let mut can_create_new_order: bool = true;
             let existing_order: Order = self.twamm_orders.read(asset_id);
@@ -384,14 +384,11 @@ pub mod cultivator {
 
         // Withdraw all LP fees to this contract
         fn collect(ref self: ContractState) {
-            let ekubo_core = self.ekubo_core.read();
-
             let mut idx: u64 = self.assets_count.read();
-            let mut assets: Array<ContractAddress> = Default::default();
             while idx != 0 {
                 let seed: Seed = self.seeds.read(idx).into();
                 if seed.token_id.is_non_zero() {
-                    ekubo_core.collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
+                    self.collect_fees_helper(seed);
                 }
                 idx -= 1;
             }
@@ -420,6 +417,11 @@ pub mod cultivator {
             } else {
                 seed.pool_key.token0
             }
+        }
+
+        fn collect_fees_helper(ref self: ContractState, seed: Seed) {
+            let delta: Delta = self.ekubo_core.read().collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
+            self.emit(Collect { asset: self.get_asset_from_seed(seed), delta });
         }
     }
 }

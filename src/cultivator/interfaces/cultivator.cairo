@@ -1,5 +1,3 @@
-use ekubo::types::bounds::Bounds;
-use ekubo::types::keys::PoolKey;
 use opus_compose::cultivator::types::Seed;
 use starknet::ContractAddress;
 
@@ -25,7 +23,7 @@ pub trait ICultivator<TContractState> {
 
     // Withdraw all LP fees to the contract
     fn collect(ref self: TContractState);
-    // Transfer a specific asset
+    // Transfer the contract's balance for a specific asset to the caller
     fn extract(ref self: TContractState, asset: ContractAddress);
 }
 
