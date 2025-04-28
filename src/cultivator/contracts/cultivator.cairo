@@ -59,9 +59,11 @@ pub mod cultivator {
         // Mapping of assets to asset IDs
         asset_ids: Map<ContractAddress, u64>,
         // Mapping of asset IDs to Seed structs (LP details)
+        // Starts from index 1
         seeds: Map<u64, StorageSeed>,
         // Mapping of asset IDs to TWAMM Order structs
-        twamm_orders: Map<u64, Order>,
+        // Starts from index 1
+        orders: Map<u64, Order>,
     }
 
     //
@@ -92,6 +94,7 @@ pub mod cultivator {
     pub struct Collect {
         #[key]
         pub asset: ContractAddress,
+        pub assets: Span<ContractAddress>,
         pub delta: Delta,
     }
 
@@ -168,18 +171,21 @@ pub mod cultivator {
             let mut idx: u64 = self.assets_count.read();
             let mut assets: Array<ContractAddress> = Default::default();
             while idx != 0 {
-                let seed: Seed = self.seeds.read(idx).into();
-                if seed.token_id.is_non_zero() {
-                    assets.append(self.get_asset_from_seed(seed));
+                match self.get_seed_helper(idx) {
+                    Option::Some(seed) => { assets.append(self.get_asset_from_seed(seed)); },
+                    Option::None => { continue; },
                 }
                 idx -= 1;
             }
             assets.span()
         }
 
-        fn get_seed(self: @ContractState, asset: ContractAddress) -> Seed {
-            let asset_id: u64 = self.asset_ids.read(asset);
-            self.seeds.read(asset_id).into()
+        fn get_order(self: @ContractState, asset: ContractAddress) -> Option<Order> {
+            self.get_order_helper(self.asset_ids.read(asset))
+        }
+
+        fn get_seed(self: @ContractState, asset: ContractAddress) -> Option<Seed> {
+            self.get_seed_helper(self.asset_ids.read(asset))
         }
 
         //
@@ -213,10 +219,8 @@ pub mod cultivator {
             // Otherwise, if asset has been added, assert no existing position for asset.
             let mut asset_id: u64 = self.asset_ids.read(asset);
             if asset_id == 0 {
-                let updated_assets_count = self.assets_count.read() + 1;
-                self.assets_count.write(updated_assets_count);
-
-                asset_id = updated_assets_count;
+                asset_id = self.assets_count.read() + 1;
+                self.assets_count.write(asset_id);
                 self.asset_ids.write(asset, asset_id);
             } else {
                 let current_seed: Seed = self.seeds.read(asset_id).into();
@@ -242,12 +246,12 @@ pub mod cultivator {
             let caller = get_caller_address();
 
             let asset_id: u64 = self.asset_ids.read(asset);
-            let seed: Seed = self.seeds.read(asset_id).into();
+            let seed = self.get_seed_helper(asset_id);
+            assert!(seed.is_some(), "CUL: No seed for asset");
+            let seed = seed.unwrap();
 
+            // Reset current Seed to default
             let zero_seed: Seed = Default::default();
-            assert!(seed.token_id.is_non_zero(), "CUL: No seed for asset");
-
-            // Update storage
             self.seeds.write(asset_id, zero_seed.into());
 
             // Transfer NFT to user
@@ -267,28 +271,31 @@ pub mod cultivator {
             let (asset_id, asset, seed) = if asset.is_some() {
                 let asset = asset.unwrap();
                 let asset_id = self.asset_ids.read(asset);
-                let seed: Seed = self.seeds.read(asset_id).into();
-                assert!(seed.token_id.is_non_zero(), "CUL: No seed for asset");
-                (asset_id, asset, seed)
+                let seed = self.get_seed_helper(asset_id);
+                assert!(seed.is_some(), "CUL: No seed for asset");
+                (asset_id, asset, seed.unwrap())
             } else {
                 let mut asset_id: u64 = Zero::zero();
                 let mut asset: ContractAddress = Zero::zero();
                 let mut seed: Seed = Default::default();
                 let mut divisor: u64 = self.assets_count.read().into();
                 while divisor != 0 {
-                    let id: u64 = ts % divisor;
+                    // Index starts from 1
+                    let id: u64 = (ts % divisor) + 1;
 
-                    let seed: Seed = self.seeds.read(id).into();
-                    if seed.token_id.is_non_zero() {
-                        asset_id = id;
-                        asset = self.get_asset_from_seed(seed);
-                        break;
+                    match self.get_seed_helper(id) {
+                        Option::Some(current_seed) => {
+                            asset_id = id;
+                            asset = self.get_asset_from_seed(current_seed);
+                            seed = current_seed;
+                        },
+                        Option::None => { continue; },
                     }
 
                     divisor -= 1;
                 }
 
-                (Zero::zero(), Zero::zero(), seed)
+                (asset_id, asset, seed)
             };
 
             if asset.is_zero() {
@@ -302,36 +309,34 @@ pub mod cultivator {
 
             // Collect accrued LP fees
             self.collect_fees_helper(seed);
-            
+
             // Withdraw any existing TWAP orders
             let mut can_create_new_order: bool = true;
-            let existing_order: Order = self.twamm_orders.read(asset_id);
-            if existing_order.order_id.is_non_zero() {
-                let existing_order_key = OrderKey {
+            let order = self.get_order_helper(asset_id);
+            if order.is_some() {
+                let order: Order = order.unwrap();
+                let order_key = OrderKey {
                     sell_token: yin.contract_address,
                     buy_token: asset,
                     fee: seed.pool_key.fee,
                     start_time: 0,
-                    end_time: existing_order.end_time,
+                    end_time: order.end_time,
                 };
 
-                ekubo_positions
-                    .withdraw_proceeds_from_sale_to_self(
-                        existing_order.order_id, existing_order_key,
-                    );
+                ekubo_positions.withdraw_proceeds_from_sale_to_self(order.order_id, order_key);
 
                 // Reset the order if it is completed
                 let order_info: OrderInfo = ekubo_positions
-                    .get_order_info(existing_order.order_id, existing_order_key);
+                    .get_order_info(order.order_id, order_key);
                 if order_info.remaining_sell_amount == 0 {
-                    self.twamm_orders.write(asset_id, Default::default());
+                    self.orders.write(asset_id, Default::default());
                     self
                         .emit(
                             OrderClosed {
                                 asset,
-                                order_id: existing_order.order_id,
-                                fee: existing_order_key.fee,
-                                end_time: existing_order_key.end_time,
+                                order_id: order.order_id,
+                                fee: order_key.fee,
+                                end_time: order_key.end_time,
                             },
                         );
                 } else {
@@ -371,7 +376,7 @@ pub mod cultivator {
                         yin_balance.try_into().unwrap(),
                     );
 
-                self.twamm_orders.write(asset_id, Order { order_id, sale_rate, end_time });
+                self.orders.write(asset_id, Order { order_id, sale_rate, end_time });
 
                 self.emit(OrderPlaced { asset, order_id, fee: seed.pool_key.fee, end_time });
             }
@@ -383,9 +388,9 @@ pub mod cultivator {
         fn collect(ref self: ContractState) {
             let mut idx: u64 = self.assets_count.read();
             while idx != 0 {
-                let seed: Seed = self.seeds.read(idx).into();
-                if seed.token_id.is_non_zero() {
-                    self.collect_fees_helper(seed);
+                match self.get_seed_helper(idx) {
+                    Option::Some(seed) => { self.collect_fees_helper(seed); },
+                    Option::None => { continue; },
                 }
                 idx -= 1;
             }
@@ -407,6 +412,22 @@ pub mod cultivator {
 
     #[generate_trait]
     impl CultivatorHelpers of CultivatorHelpersTrait {
+        fn get_order_helper(self: @ContractState, asset_id: u64) -> Option<Order> {
+            let order: Order = self.orders.read(asset_id);
+            match order.order_id {
+                0 => Option::None,
+                _ => Option::Some(order),
+            }
+        }
+
+        fn get_seed_helper(self: @ContractState, asset_id: u64) -> Option<Seed> {
+            let seed: Seed = self.seeds.read(asset_id).into();
+            match seed.token_id {
+                0 => Option::None,
+                _ => Option::Some(seed),
+            }
+        }
+
         fn get_asset_from_seed(self: @ContractState, seed: Seed) -> ContractAddress {
             let yin: ContractAddress = self.yin.read().contract_address;
             if seed.pool_key.token0 == yin {
@@ -417,8 +438,18 @@ pub mod cultivator {
         }
 
         fn collect_fees_helper(ref self: ContractState, seed: Seed) {
-            let delta: Delta = self.ekubo_core.read().collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
-            self.emit(Collect { asset: self.get_asset_from_seed(seed), delta });
+            let delta: Delta = self
+                .ekubo_core
+                .read()
+                .collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
+            self
+                .emit(
+                    Collect {
+                        asset: self.get_asset_from_seed(seed),
+                        assets: array![seed.pool_key.token0, seed.pool_key.token1].span(),
+                        delta,
+                    },
+                );
         }
     }
 }
