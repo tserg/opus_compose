@@ -30,12 +30,16 @@ pub trait IFrontendDataProvider<TContractState> {
     fn get_user_staked_tvl(
         self: @TContractState, stabilizer: ContractAddress, user: ContractAddress,
     ) -> Wad;
+    // Returns the claimable yin for a user
+    fn get_user_claimable_yin(
+        self: @TContractState, stabilizer: ContractAddress, user: ContractAddress,
+    ) -> Wad;
 }
 
 #[starknet::contract]
 pub mod stabilizer_fdp {
     use core::integer::{u512, u512_safe_div_rem_by_u256};
-    use core::num::traits::{WideMul, Zero};
+    use core::num::traits::{Pow, WideMul, Zero};
     use ekubo::interfaces::core::{ICoreDispatcher, ICoreDispatcherTrait};
     use ekubo::interfaces::mathlib::{IMathLibDispatcherTrait, dispatcher as mathlib};
     use ekubo::types::bounds::Bounds;
@@ -47,7 +51,8 @@ pub mod stabilizer_fdp {
     use opus_compose::stabilizer::interfaces::stabilizer::{
         IStabilizerDispatcher, IStabilizerDispatcherTrait,
     };
-    use opus_compose::stabilizer::types::PoolInfo;
+    use opus_compose::stabilizer::math::get_accumulated_yin;
+    use opus_compose::stabilizer::types::{PoolInfo, Stake, YieldState};
     use starknet::ContractAddress;
     use wadray::{Ray, WAD_DECIMALS, Wad, rmul_wr};
     use super::{IFrontendDataProvider, IOracleDispatcher, IOracleDispatcherTrait};
@@ -103,6 +108,19 @@ pub mod stabilizer_fdp {
 
             get_proportionate_tvl(pool_tvl, staked_liquidity, pool_info.liquidity)
         }
+
+        fn get_user_claimable_yin(
+            self: @ContractState, stabilizer: ContractAddress, user: ContractAddress,
+        ) -> Wad {
+            let stabilizer = IStabilizerDispatcher { contract_address: stabilizer };
+            let stake: Stake = stabilizer.get_stake(user);
+            let yield_state: YieldState = stabilizer.get_yield_state();
+
+            let claimable: u256 = get_accumulated_yin(
+                stake.liquidity, yield_state.yin_per_liquidity - stake.yin_per_liquidity_snapshot,
+            );
+            claimable.try_into().unwrap()
+        }
     }
 
     //
@@ -116,7 +134,7 @@ pub mod stabilizer_fdp {
         ) -> PoolInfo {
             let math = mathlib();
 
-            let ekubo_core = ICoreDispatcher { contract_address: mainnet::ekubo_core() };
+            let ekubo_core = ICoreDispatcher { contract_address: mainnet::EKUBO_CORE };
             let pool_liquidity: u128 = ekubo_core.get_pool_liquidity(pool_key);
             let pool_price: PoolPrice = ekubo_core.get_pool_price(pool_key);
 
@@ -146,20 +164,25 @@ pub mod stabilizer_fdp {
             self: @ContractState, pool_key: PoolKey, pool_info: PoolInfo,
         ) -> Wad {
             let (other_token, other_token_amount, yin_amount) = if pool_key
-                .token0 == mainnet::shrine() {
+                .token0 == mainnet::SHRINE {
                 (pool_key.token1, pool_info.token1_amount, pool_info.token0_amount)
             } else {
                 (pool_key.token0, pool_info.token0_amount, pool_info.token1_amount)
             };
 
+            let other_token_decimals: u8 = IERC20Dispatcher { contract_address: other_token }
+                .decimals();
             let other_token_price: Wad = convert_ekubo_oracle_price_to_wad(
-                IOracleDispatcher { contract_address: mainnet::ekubo_oracle() }
-                    .get_price_x128_over_last(other_token, mainnet::shrine(), TWAP_PERIOD),
-                IERC20Dispatcher { contract_address: other_token }.decimals(),
+                IOracleDispatcher { contract_address: mainnet::EKUBO_ORACLE }
+                    .get_price_x128_over_last(other_token, mainnet::SHRINE, TWAP_PERIOD),
+                other_token_decimals,
                 WAD_DECIMALS,
             );
 
-            other_token_amount.try_into().unwrap() * other_token_price
+            // Scale the other token to Wad precision
+            let scaled_other_token_amount: u256 = other_token_amount
+                * 10_u256.pow((WAD_DECIMALS - other_token_decimals).into());
+            scaled_other_token_amount.try_into().unwrap() * other_token_price
                 + yin_amount.try_into().unwrap()
         }
     }
