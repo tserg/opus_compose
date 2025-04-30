@@ -37,3 +37,8 @@ block_id.number = "1034844"
 name = "MAINNET_STABILIZER"
 url = "$NODE_URL"
 block_id.number = "1047705"
+
+[[tool.snforge.fork]]
+name = "MAINNET_CULTIVATOR"
+url = "$NODE_URL"
+block_id.number = "1357222"
