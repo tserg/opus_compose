@@ -171,9 +171,8 @@ pub mod cultivator {
             let mut idx: u64 = self.assets_count.read();
             let mut assets: Array<ContractAddress> = Default::default();
             while idx != 0 {
-                match self.get_seed_helper(idx) {
-                    Option::Some(seed) => { assets.append(self.get_asset_from_seed(seed)); },
-                    Option::None => { continue; },
+                if let Some(seed) = self.get_seed_helper(idx) {
+                    assets.append(self.get_asset_from_seed(seed));
                 }
                 idx -= 1;
             }
@@ -283,13 +282,11 @@ pub mod cultivator {
                     // Index starts from 1
                     let id: u64 = (ts % divisor) + 1;
 
-                    match self.get_seed_helper(id) {
-                        Option::Some(current_seed) => {
-                            asset_id = id;
-                            asset = self.get_asset_from_seed(current_seed);
-                            seed = current_seed;
-                        },
-                        Option::None => { continue; },
+                    if let Some(current_seed) = self.get_seed_helper(id) {
+                        asset_id = id;
+                        asset = self.get_asset_from_seed(current_seed);
+                        seed = current_seed;
+                        break;
                     }
 
                     divisor -= 1;
@@ -388,9 +385,8 @@ pub mod cultivator {
         fn collect(ref self: ContractState) {
             let mut idx: u64 = self.assets_count.read();
             while idx != 0 {
-                match self.get_seed_helper(idx) {
-                    Option::Some(seed) => { self.collect_fees_helper(seed); },
-                    Option::None => { continue; },
+                if let Some(seed) = self.get_seed_helper(idx) {
+                    self.collect_fees_helper(seed);
                 }
                 idx -= 1;
             }
