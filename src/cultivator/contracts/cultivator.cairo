@@ -11,7 +11,7 @@ pub mod cultivator {
     use ekubo::interfaces::positions::{
         GetTokenInfoResult, IPositionsDispatcher, IPositionsDispatcherTrait,
     };
-    use ekubo::types::delta::Delta;
+    use opus::types::AssetBalance;
     use opus_compose::cultivator::interfaces::cultivator::ICultivator;
     use opus_compose::cultivator::roles::cultivator_roles;
     use opus_compose::cultivator::types::{Order, Seed, StorageSeed};
@@ -52,7 +52,6 @@ pub mod cultivator {
         #[substorage(v0)]
         access_control: access_control_component::Storage,
         yin: IERC20Dispatcher,
-        ekubo_core: ICoreDispatcher,
         ekubo_positions: IPositionsDispatcher,
         ekubo_positions_nft: IERC721Dispatcher,
         assets_count: u64,
@@ -94,8 +93,7 @@ pub mod cultivator {
     pub struct Collect {
         #[key]
         pub asset: ContractAddress,
-        pub assets: Span<ContractAddress>,
-        pub delta: Delta,
+        pub assets: Span<AssetBalance>,
     }
 
     #[derive(Copy, Drop, starknet::Event, PartialEq)]
@@ -148,14 +146,12 @@ pub mod cultivator {
         ref self: ContractState,
         admin: ContractAddress,
         yin: ContractAddress,
-        ekubo_core: ContractAddress,
         ekubo_positions: ContractAddress,
         ekubo_positions_nft: ContractAddress,
     ) {
         self.access_control.initializer(admin, Option::Some(cultivator_roles::ADMIN));
 
         self.yin.write(IERC20Dispatcher { contract_address: yin });
-        self.ekubo_core.write(ICoreDispatcher { contract_address: ekubo_core });
         self.ekubo_positions.write(IPositionsDispatcher { contract_address: ekubo_positions });
         self.ekubo_positions_nft.write(IERC721Dispatcher { contract_address: ekubo_positions_nft });
     }
@@ -434,16 +430,19 @@ pub mod cultivator {
         }
 
         fn collect_fees_helper(ref self: ContractState, seed: Seed) {
-            let delta: Delta = self
-                .ekubo_core
+            let (fees0, fees1) = self
+                .ekubo_positions
                 .read()
-                .collect_fees(seed.pool_key, seed.token_id.into(), seed.bounds);
+                .collect_fees(seed.token_id.into(), seed.pool_key, seed.bounds);
             self
                 .emit(
                     Collect {
                         asset: self.get_asset_from_seed(seed),
-                        assets: array![seed.pool_key.token0, seed.pool_key.token1].span(),
-                        delta,
+                        assets: array![
+                            AssetBalance { address: seed.pool_key.token0, amount: fees0 },
+                            AssetBalance { address: seed.pool_key.token1, amount: fees1 },
+                        ]
+                            .span(),
                     },
                 );
         }
