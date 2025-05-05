@@ -28,7 +28,7 @@ pub mod cultivator {
     ///
 
     pub const TWAMM_ORDER_STEP_SIZE: u64 = 65536;
-    pub const TWAMM_ORDER_PERIOD: u64 = 65536; // ~18 hours
+    pub const TWAMM_ORDER_PERIOD: u64 = 131072; // ~18 to 36 hours
     pub const YIN_CULTIVATE_THRESHOLD: u128 = 10 * WAD_ONE;
 
     //
@@ -88,6 +88,7 @@ pub mod cultivator {
         #[key]
         pub asset: ContractAddress,
         pub seed: Seed,
+        pub liquidity_delta: u128,
     }
 
     #[derive(Copy, Drop, starknet::Event, PartialEq)]
@@ -261,7 +262,8 @@ pub mod cultivator {
             self.emit(Prune { asset, seed });
         }
 
-        fn cultivate(ref self: ContractState, asset: Option<ContractAddress>) {
+        // Returns the liquidity added
+        fn cultivate(ref self: ContractState, asset: Option<ContractAddress>) -> u128 {
             self.access_control.assert_has_role(cultivator_roles::CULTIVATE);
 
             let ts: u64 = get_block_timestamp();
@@ -295,7 +297,7 @@ pub mod cultivator {
             };
 
             if asset.is_zero() {
-                return;
+                return 0;
             }
 
             let cultivator = get_contract_address();
@@ -314,7 +316,8 @@ pub mod cultivator {
             asset_erc20
                 .transfer(ekubo_positions.contract_address, asset_erc20.balance_of(cultivator));
 
-            ekubo_positions.deposit(seed.token_id, seed.pool_key, seed.bounds, 1);
+            let liquidity_delta: u128 = ekubo_positions.deposit(seed.token_id, seed.pool_key, seed.bounds, 1);
+
             let ekubo_positions_clear = IClearDispatcher {
                 contract_address: ekubo_positions.contract_address,
             };
@@ -347,7 +350,9 @@ pub mod cultivator {
                     );
             }
 
-            self.emit(Cultivate { asset, seed });
+            self.emit(Cultivate { asset, seed, liquidity_delta });
+
+            liquidity_delta
         }
 
         // Withdraw all LP fees to this contract
@@ -436,7 +441,7 @@ pub mod cultivator {
         }
 
         fn calculate_twamm_order_end_time(self: @ContractState, ts: u64) -> u64 {
-            (ts + TWAMM_ORDER_PERIOD * 2) - ts % TWAMM_ORDER_STEP_SIZE
+            ts + TWAMM_ORDER_PERIOD - ts % TWAMM_ORDER_STEP_SIZE
         }
 
         // Checks if a TWAMM order exists and closes it if certain conditions are met.

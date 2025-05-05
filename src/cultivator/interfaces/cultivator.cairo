@@ -23,7 +23,8 @@ pub trait ICultivator<TContractState> {
     fn prune(ref self: TContractState, asset: ContractAddress);
 
     // Compound a LP position
-    fn cultivate(ref self: TContractState, asset: Option<ContractAddress>);
+    // Returns the liquidity provided
+    fn cultivate(ref self: TContractState, asset: Option<ContractAddress>) -> u128;
 
     // Withdraw all LP fees to the contract
     fn collect(ref self: TContractState);
