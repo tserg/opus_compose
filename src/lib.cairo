@@ -7,7 +7,7 @@ pub mod cultivator {
     pub mod interfaces {
         pub mod cultivator;
     }
-
+    #[cfg(test)]
     pub mod tests {
         pub mod test_cultivator;
         pub mod utils;
