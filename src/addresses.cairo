@@ -90,5 +90,7 @@ pub mod mainnet {
         .try_into()
         .unwrap();
     pub const EKUBO_TWAMM_EXTENSION: ContractAddress =
-        0x043e4f09c32d13d43a880e85f69f7de93ceda62d6cf2581a582c6db635548fdc.try_into().unwrap();
+        0x043e4f09c32d13d43a880e85f69f7de93ceda62d6cf2581a582c6db635548fdc
+        .try_into()
+        .unwrap();
 }
