@@ -6,7 +6,7 @@ pub mod cultivator {
     use ekubo::components::clear::{IClearDispatcher, IClearDispatcherTrait};
     use ekubo::interfaces::erc20::IERC20Dispatcher as EkuboERC20Dispatcher;
     use ekubo::interfaces::erc721::{IERC721Dispatcher, IERC721DispatcherTrait};
-    use ekubo::interfaces::extensions::twamm::{OrderInfo, OrderKey};
+    use ekubo::interfaces::extensions::twamm::OrderKey;
     use ekubo::interfaces::positions::{
         GetTokenInfoResult, IPositionsDispatcher, IPositionsDispatcherTrait,
     };
@@ -382,9 +382,6 @@ pub mod cultivator {
 
     #[generate_trait]
     impl CultivatorHelpers of CultivatorHelpersTrait {
-        // TODO: investigate if we can skip writing an empty order to storage to zero
-        //       instead, check if there is remaining sell amount or if block timestamp is greater
-        //       than end time
         fn get_order_helper(self: @ContractState, asset_id: u64) -> Option<Order> {
             let order: Order = self.orders.read(asset_id);
             if order == Default::default() {
@@ -456,7 +453,9 @@ pub mod cultivator {
         ) -> bool {
             let ekubo_positions = self.ekubo_positions.read();
 
-            let order = self.get_order_helper(asset_id);
+            let order: Option<Order> = self.get_order_helper(asset_id);
+
+            // Early return for completed orders, whether a forced closure or not
             if order.is_none() {
                 return true;
             }
@@ -467,19 +466,19 @@ pub mod cultivator {
 
             ekubo_positions.withdraw_proceeds_from_sale_to_self(seed.token_id, order_key);
 
-            // Reset the order if it is completed
-            let order_info: OrderInfo = ekubo_positions.get_order_info(seed.token_id, order_key);
-
-            if !force_closure && order_info.remaining_sell_amount.is_non_zero() {
-                return false;
-            }
-
-            if force_closure && order_info.remaining_sell_amount.is_non_zero() {
-                ekubo_positions
-                    .decrease_sale_rate_to_self(seed.token_id, order_key, order.sale_rate);
+            let order_is_completed: bool = get_block_timestamp() > order.end_time;
+            if !order_is_completed {
+                if force_closure {
+                    ekubo_positions
+                        .decrease_sale_rate_to_self(seed.token_id, order_key, order.sale_rate);
+                } else {
+                    // Early return for ongoing orders without forced closure
+                    return false;
+                }
             }
 
             self.orders.write(asset_id, Default::default());
+
             self
                 .emit(
                     OrderClosed {
@@ -489,7 +488,6 @@ pub mod cultivator {
                         end_time: order_key.end_time,
                     },
                 );
-            self.orders.write(asset_id, Default::default());
 
             true
         }
