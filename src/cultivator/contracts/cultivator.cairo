@@ -4,7 +4,6 @@ pub mod cultivator {
     use core::cmp::minmax;
     use core::num::traits::Zero;
     use ekubo::components::clear::{IClearDispatcher, IClearDispatcherTrait};
-    use ekubo::interfaces::core::{ICoreDispatcher, ICoreDispatcherTrait};
     use ekubo::interfaces::erc20::IERC20Dispatcher as EkuboERC20Dispatcher;
     use ekubo::interfaces::erc721::{IERC721Dispatcher, IERC721DispatcherTrait};
     use ekubo::interfaces::extensions::twamm::{OrderInfo, OrderKey};
@@ -316,7 +315,8 @@ pub mod cultivator {
             asset_erc20
                 .transfer(ekubo_positions.contract_address, asset_erc20.balance_of(cultivator));
 
-            let liquidity_delta: u128 = ekubo_positions.deposit(seed.token_id, seed.pool_key, seed.bounds, 1);
+            let liquidity_delta: u128 = ekubo_positions
+                .deposit(seed.token_id, seed.pool_key, seed.bounds, 1);
 
             let ekubo_positions_clear = IClearDispatcher {
                 contract_address: ekubo_positions.contract_address,
@@ -382,8 +382,9 @@ pub mod cultivator {
 
     #[generate_trait]
     impl CultivatorHelpers of CultivatorHelpersTrait {
-        // TODO: investigate if we can skip writing an empty order to storage to zero 
-        //       instead, check if there is remaining sell amount or if block timestamp is greater than end time
+        // TODO: investigate if we can skip writing an empty order to storage to zero
+        //       instead, check if there is remaining sell amount or if block timestamp is greater
+        //       than end time
         fn get_order_helper(self: @ContractState, asset_id: u64) -> Option<Order> {
             let order: Order = self.orders.read(asset_id);
             if order == Default::default() {
