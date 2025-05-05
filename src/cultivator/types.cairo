@@ -50,7 +50,6 @@ pub impl SeedIntoStorageSeed of Into<Seed, StorageSeed> {
 
 #[derive(Copy, Drop, Default, Serde, PartialEq, starknet::Store)]
 pub struct Order {
-    pub order_id: u64,
     pub sale_rate: u128,
     pub end_time: u64,
 }

@@ -27,7 +27,8 @@ pub mod cultivator {
     // Constants
     ///
 
-    pub const TWAP_ORDER_PERIOD: u64 = 24 * 60 * 60; // 24 hours
+    pub const TWAMM_ORDER_STEP_SIZE: u64 = 65536;
+    pub const TWAMM_ORDER_PERIOD: u64 = 65536; // ~18 hours
     pub const YIN_CULTIVATE_THRESHOLD: u128 = 10 * WAD_ONE;
 
     //
@@ -245,6 +246,8 @@ pub mod cultivator {
             assert!(seed.is_some(), "CUL: No seed for asset");
             let seed = seed.unwrap();
 
+            self.close_twamm_order(asset, asset_id, seed, true);
+
             // Reset current Seed to default
             let zero_seed: Seed = Default::default();
             self.seeds.write(asset_id, zero_seed.into());
@@ -303,39 +306,8 @@ pub mod cultivator {
             // Collect accrued LP fees
             self.collect_fees_helper(seed);
 
-            // Withdraw any existing TWAP orders
-            let mut can_create_new_order: bool = true;
-            let order = self.get_order_helper(asset_id);
-            if order.is_some() {
-                let order: Order = order.unwrap();
-                let order_key = OrderKey {
-                    sell_token: yin.contract_address,
-                    buy_token: asset,
-                    fee: seed.pool_key.fee,
-                    start_time: 0,
-                    end_time: order.end_time,
-                };
-
-                ekubo_positions.withdraw_proceeds_from_sale_to_self(order.order_id, order_key);
-
-                // Reset the order if it is completed
-                let order_info: OrderInfo = ekubo_positions
-                    .get_order_info(order.order_id, order_key);
-                if order_info.remaining_sell_amount == 0 {
-                    self.orders.write(asset_id, Default::default());
-                    self
-                        .emit(
-                            OrderClosed {
-                                asset,
-                                order_id: order.order_id,
-                                fee: order_key.fee,
-                                end_time: order_key.end_time,
-                            },
-                        );
-                } else {
-                    can_create_new_order = false;
-                }
-            }
+            // Withdraw any existing TWAMM orders
+            let can_create_new_order: bool = self.close_twamm_order(asset, asset_id, seed, false);
 
             // Provide liquidity
             yin.transfer(ekubo_positions.contract_address, yin.balance_of(cultivator));
@@ -352,26 +324,27 @@ pub mod cultivator {
             ekubo_positions_clear
                 .clear(EkuboERC20Dispatcher { contract_address: asset_erc20.contract_address });
 
-            // Create a TWAP order for leftover yin if there is no existing TWAP order
+            // Create a TWAMM order for leftover yin if there is no existing TWAMM order
             let yin_balance = yin.balance_of(cultivator);
             if yin_balance > YIN_CULTIVATE_THRESHOLD.into() && can_create_new_order {
                 yin.transfer(ekubo_positions.contract_address, yin_balance);
-                let end_time: u64 = ts + TWAP_ORDER_PERIOD;
-                let (order_id, sale_rate) = ekubo_positions
-                    .mint_and_increase_sell_amount(
-                        OrderKey {
-                            sell_token: yin.contract_address,
-                            buy_token: asset,
-                            fee: seed.pool_key.fee,
-                            start_time: 0,
-                            end_time,
-                        },
+                let end_time: u64 = self.calculate_twamm_order_end_time(ts);
+                // Reuse the LP position NFT for the TWAMM order
+                let sale_rate: u128 = ekubo_positions
+                    .increase_sell_amount(
+                        seed.token_id,
+                        self.construct_twamm_order_key(asset, seed.pool_key.fee, end_time),
                         yin_balance.try_into().unwrap(),
                     );
 
-                self.orders.write(asset_id, Order { order_id, sale_rate, end_time });
+                self.orders.write(asset_id, Order { sale_rate, end_time });
 
-                self.emit(OrderPlaced { asset, order_id, fee: seed.pool_key.fee, end_time });
+                self
+                    .emit(
+                        OrderPlaced {
+                            asset, order_id: seed.token_id, fee: seed.pool_key.fee, end_time,
+                        },
+                    );
             }
 
             self.emit(Cultivate { asset, seed });
@@ -404,11 +377,14 @@ pub mod cultivator {
 
     #[generate_trait]
     impl CultivatorHelpers of CultivatorHelpersTrait {
+        // TODO: investigate if we can skip writing an empty order to storage to zero 
+        //       instead, check if there is remaining sell amount or if block timestamp is greater than end time
         fn get_order_helper(self: @ContractState, asset_id: u64) -> Option<Order> {
             let order: Order = self.orders.read(asset_id);
-            match order.order_id {
-                0 => Option::None,
-                _ => Option::Some(order),
+            if order == Default::default() {
+                Option::None
+            } else {
+                Option::Some(order)
             }
         }
 
@@ -429,6 +405,18 @@ pub mod cultivator {
             }
         }
 
+        fn construct_twamm_order_key(
+            self: @ContractState, asset: ContractAddress, fee: u128, end_time: u64,
+        ) -> OrderKey {
+            OrderKey {
+                sell_token: self.yin.read().contract_address,
+                buy_token: asset,
+                fee,
+                start_time: 0,
+                end_time,
+            }
+        }
+
         fn collect_fees_helper(ref self: ContractState, seed: Seed) {
             let (fees0, fees1) = self
                 .ekubo_positions
@@ -445,6 +433,59 @@ pub mod cultivator {
                             .span(),
                     },
                 );
+        }
+
+        fn calculate_twamm_order_end_time(self: @ContractState, ts: u64) -> u64 {
+            (ts + TWAMM_ORDER_PERIOD * 2) - ts % TWAMM_ORDER_STEP_SIZE
+        }
+
+        // Checks if a TWAMM order exists and closes it if certain conditions are met.
+        // Returns a boolean of whether the TWAMM order for the asset was closed.
+        fn close_twamm_order(
+            ref self: ContractState,
+            asset: ContractAddress,
+            asset_id: u64,
+            seed: Seed,
+            force_closure: bool,
+        ) -> bool {
+            let ekubo_positions = self.ekubo_positions.read();
+
+            let order = self.get_order_helper(asset_id);
+            if order.is_none() {
+                return true;
+            }
+
+            let order: Order = order.unwrap();
+            let order_key: OrderKey = self
+                .construct_twamm_order_key(asset, seed.pool_key.fee, order.end_time);
+
+            ekubo_positions.withdraw_proceeds_from_sale_to_self(seed.token_id, order_key);
+
+            // Reset the order if it is completed
+            let order_info: OrderInfo = ekubo_positions.get_order_info(seed.token_id, order_key);
+
+            if !force_closure && order_info.remaining_sell_amount.is_non_zero() {
+                return false;
+            }
+
+            if force_closure && order_info.remaining_sell_amount.is_non_zero() {
+                ekubo_positions
+                    .decrease_sale_rate_to_self(seed.token_id, order_key, order.sale_rate);
+            }
+
+            self.orders.write(asset_id, Default::default());
+            self
+                .emit(
+                    OrderClosed {
+                        asset,
+                        order_id: seed.token_id,
+                        fee: order_key.fee,
+                        end_time: order_key.end_time,
+                    },
+                );
+            self.orders.write(asset_id, Default::default());
+
+            true
         }
     }
 }
