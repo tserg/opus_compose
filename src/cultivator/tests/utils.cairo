@@ -25,7 +25,6 @@ pub mod cultivator_utils {
         let mut calldata: Array<felt252> = array![
             mainnet::MULTISIG.into(),
             mainnet::SHRINE.into(),
-            mainnet::EKUBO_CORE.into(),
             mainnet::EKUBO_POSITIONS.into(),
             mainnet::EKUBO_POSITIONS_NFT.into(),
         ];
