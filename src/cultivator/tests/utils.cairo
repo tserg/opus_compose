@@ -1,8 +1,10 @@
 pub mod cultivator_utils {
+    use core::num::traits::Zero;
     use ekubo::components::clear::{IClearDispatcher, IClearDispatcherTrait};
     use ekubo::interfaces::core::{GetPositionWithFeesResult, ICoreDispatcher, ICoreDispatcherTrait};
     use ekubo::interfaces::erc20::IERC20Dispatcher as EkuboERC20Dispatcher;
     use ekubo::interfaces::erc721::IERC721Dispatcher;
+    use ekubo::interfaces::extensions::twamm::{OrderInfo, OrderKey};
     use ekubo::interfaces::positions::{IPositionsDispatcher, IPositionsDispatcherTrait};
     use ekubo::interfaces::router::{
         IRouterDispatcher, IRouterDispatcherTrait, RouteNode, TokenAmount,
@@ -12,8 +14,10 @@ pub mod cultivator_utils {
     use ekubo::types::i129::i129;
     use ekubo::types::keys::{PoolKey, PositionKey};
     use opus_compose::addresses::mainnet;
-    use opus_compose::cultivator::interfaces::cultivator::ICultivatorDispatcher;
-    use opus_compose::cultivator::types::Seed;
+    use opus_compose::cultivator::interfaces::cultivator::{
+        ICultivatorDispatcher, ICultivatorDispatcherTrait,
+    };
+    use opus_compose::cultivator::types::{Order, Seed};
     use opus_compose::interfaces::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use snforge_std::{
         CheatSpan, ContractClass, ContractClassTrait, DeclareResultTrait, cheat_caller_address,
@@ -176,5 +180,34 @@ pub mod cultivator_utils {
         );
 
         after_position_with_fees
+    }
+
+    //
+    // Assertion helpers
+    //
+
+    pub fn check_existing_order_completion(
+        test_config: CultivatorTestConfig,
+        asset: ContractAddress,
+        seed: Seed,
+        should_be_completed: bool,
+    ) {
+        let order: Option<Order> = test_config.cultivator.get_order(asset);
+        let order = order.expect('no order found');
+        let order_key = OrderKey {
+            sell_token: test_config.yin.contract_address,
+            buy_token: asset,
+            fee: seed.pool_key.fee,
+            start_time: 0,
+            end_time: order.end_time,
+        };
+        let order_info: OrderInfo = test_config
+            .ekubo_positions
+            .get_order_info(seed.token_id, order_key);
+        if should_be_completed {
+            assert!(order_info.remaining_sell_amount.is_zero(), "order not completed");
+        } else {
+            assert!(order_info.remaining_sell_amount.is_non_zero(), "order completed");
+        }
     }
 }
