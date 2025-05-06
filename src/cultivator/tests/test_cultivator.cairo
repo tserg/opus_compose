@@ -275,6 +275,19 @@ fn test_prune_no_existing_position() {
 // Cultivate
 //
 
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+fn test_cultivate_no_asset() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+    
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    assert!(cultivator.cultivate(Option::None).is_zero(), "should be zero liquidity delta");
+}
+
 #[test]
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_single_asset_without_existing_twamm_order() {
@@ -850,4 +863,28 @@ fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
             first_excess_yin *= 2;
         }
     }
+}
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+#[should_panic(expected: 'Caller missing role')]
+fn test_cultivate_unauthorized() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, .. } = test_config;
+
+    cheat_caller_address(cultivator.contract_address, BAD_GUY, CheatSpan::TargetCalls(1));
+    cultivator.cultivate(Option::None);
+}
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+#[should_panic(expected: "CUL: No seed for asset")]
+fn test_cultivate_unplanted_asset() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+    
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    cultivator.cultivate(Option::Some(asset));
 }
