@@ -278,399 +278,576 @@ fn test_prune_no_existing_position() {
 #[test]
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_single_asset_without_existing_twamm_order() {
-    for create_twap_order in BOOL_PARAMETRIZED.span() {
-        let test_config = setup(Option::None);
-        let CultivatorTestConfig {
-            cultivator, yin, ekubo_core, ekubo_positions_nft, ..,
-        } = test_config;
-        let user = mainnet::MULTISIG;
-        let asset = mainnet::EKUBO;
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+    let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
 
-        let mut spy = spy_events();
+    let (ekubo_seed, _) = create_cash_ekubo_lp(test_config);
 
-        let (ekubo_seed, _) = create_cash_ekubo_lp(test_config);
+    for specify_asset in BOOL_PARAMETRIZED.span() {
+        for create_twap_order in BOOL_PARAMETRIZED.span() {
+            let mut spy = spy_events();
 
-        cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
-        ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
+            cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+            ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
 
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        cultivator.plant(asset, ekubo_seed);
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            cultivator.plant(asset, ekubo_seed);
 
-        let before_position_with_fees: GetPositionWithFeesResult = generate_ekubo_lp_fees(
-            test_config, ekubo_seed,
-        );
+            let before_position_with_fees: GetPositionWithFeesResult = generate_ekubo_lp_fees(
+                test_config, ekubo_seed,
+            );
 
-        let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
-        if *create_twap_order {
-            cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
-            yin.transfer(cultivator.contract_address, excess_yin.into());
-        }
+            if *create_twap_order {
+                cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
+                yin.transfer(cultivator.contract_address, excess_yin.into());
+            }
 
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        let liquidity_delta: u128 = cultivator.cultivate(Option::Some(asset));
-        assert!(liquidity_delta.is_non_zero(), "no liquidity added");
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            let liquidity_delta: u128 = if *specify_asset {
+                cultivator.cultivate(Option::Some(asset))
+            } else {
+                cultivator.cultivate(Option::None)
+            };
+            assert!(liquidity_delta.is_non_zero(), "no liquidity added");
 
-        let position_key = PositionKey {
-            salt: ekubo_seed.token_id, owner: mainnet::EKUBO_POSITIONS, bounds: ekubo_seed.bounds,
-        };
-        let after_position_with_fees: GetPositionWithFeesResult = ekubo_core
-            .get_position_with_fees(ekubo_seed.pool_key, position_key);
-        assert!(after_position_with_fees.fees0.is_zero(), "fees not zeroed #1");
-        assert!(after_position_with_fees.fees1.is_zero(), "fees not zeroed #2");
+            let position_key = PositionKey {
+                salt: ekubo_seed.token_id,
+                owner: mainnet::EKUBO_POSITIONS,
+                bounds: ekubo_seed.bounds,
+            };
+            let after_position_with_fees: GetPositionWithFeesResult = ekubo_core
+                .get_position_with_fees(ekubo_seed.pool_key, position_key);
+            assert!(after_position_with_fees.fees0.is_zero(), "fees not zeroed #1");
+            assert!(after_position_with_fees.fees1.is_zero(), "fees not zeroed #2");
 
-        let mut expected_events = array![
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Cultivate(
-                    cultivator_contract::Cultivate { asset, seed: ekubo_seed, liquidity_delta },
+            let mut expected_events = array![
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Cultivate(
+                        cultivator_contract::Cultivate { asset, seed: ekubo_seed, liquidity_delta },
+                    ),
                 ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Collect(
-                    cultivator_contract::Collect {
-                        asset,
-                        assets: array![
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token0,
-                                amount: before_position_with_fees.fees0,
-                            },
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token1,
-                                amount: before_position_with_fees.fees1,
-                            },
-                        ]
-                            .span(),
-                    },
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Collect(
+                        cultivator_contract::Collect {
+                            asset,
+                            fees: array![
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token0,
+                                    amount: before_position_with_fees.fees0,
+                                },
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token1,
+                                    amount: before_position_with_fees.fees1,
+                                },
+                            ]
+                                .span(),
+                        },
+                    ),
                 ),
-            ),
-        ];
+            ];
 
-        let order: Option<Order> = cultivator.get_order(asset);
-        if *create_twap_order {
-            assert!(order.is_some(), "order not created");
-            let order: Order = order.unwrap();
+            let order: Option<Order> = cultivator.get_order(asset);
+            if *create_twap_order {
+                assert!(order.is_some(), "order not created");
+                let order: Order = order.unwrap();
+                expected_events
+                    .append(
+                        (
+                            cultivator.contract_address,
+                            cultivator_contract::Event::OrderPlaced(
+                                cultivator_contract::OrderPlaced {
+                                    asset,
+                                    order_id: ekubo_seed.token_id,
+                                    fee: ekubo_seed.pool_key.fee,
+                                    end_time: order.end_time,
+                                },
+                            ),
+                        ),
+                    );
+                expected_events
+                    .append(
+                        // Construct the event for forced closure of the order
+                        // when pruning the asset below
+                        (
+                            cultivator.contract_address,
+                            cultivator_contract::Event::OrderClosed(
+                                cultivator_contract::OrderClosed {
+                                    asset,
+                                    order_id: ekubo_seed.token_id,
+                                    fee: ekubo_seed.pool_key.fee,
+                                    end_time: order.end_time,
+                                },
+                            ),
+                        ),
+                    );
+            } else {
+                assert!(order.is_none(), "order created");
+            }
+
+            // Reset the state in Cultivator
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(2));
+            cultivator.prune(asset);
+            let extracted_yin_amt: u256 = cultivator.extract(mainnet::SHRINE);
+
+            assert_eq!(
+                ekubo_positions_nft.owner_of(ekubo_seed.token_id.into()), user, "wrong owner",
+            );
+            let order: Option<Order> = cultivator.get_order(asset);
+            assert!(order.is_none(), "order is not pruned");
+
             expected_events
                 .append(
                     (
                         cultivator.contract_address,
-                        cultivator_contract::Event::OrderPlaced(
-                            cultivator_contract::OrderPlaced {
-                                asset,
-                                order_id: ekubo_seed.token_id,
-                                fee: ekubo_seed.pool_key.fee,
-                                end_time: order.end_time,
+                        cultivator_contract::Event::Prune(
+                            cultivator_contract::Prune { asset, seed: ekubo_seed },
+                        ),
+                    ),
+                );
+            expected_events
+                .append(
+                    (
+                        cultivator.contract_address,
+                        cultivator_contract::Event::Extract(
+                            cultivator_contract::Extract {
+                                caller: user, asset: mainnet::SHRINE, amount: extracted_yin_amt,
                             },
                         ),
                     ),
                 );
-        } else {
-            assert!(order.is_none(), "order created");
-        }
 
-        spy.assert_emitted(@expected_events);
+            spy.assert_emitted(@expected_events);
+        }
     }
 }
 
 #[test]
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
-    for create_excess_yin in BOOL_PARAMETRIZED.span() {
-        let test_config = setup(Option::None);
-        let CultivatorTestConfig {
-            cultivator, yin, ekubo_core, ekubo_positions_nft, ..,
-        } = test_config;
-        let user = mainnet::MULTISIG;
-        let asset = mainnet::EKUBO;
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+    let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 3;
 
-        let mut spy = spy_events();
+    let (ekubo_seed, _) = create_cash_ekubo_lp(test_config);
 
-        let (ekubo_seed, _) = create_cash_ekubo_lp(test_config);
+    for specify_asset in BOOL_PARAMETRIZED.span() {
+        for create_excess_yin in BOOL_PARAMETRIZED.span() {
+            let mut spy = spy_events();
 
-        cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
-        ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
+            cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+            ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
 
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        cultivator.plant(asset, ekubo_seed);
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            cultivator.plant(asset, ekubo_seed);
 
-        let position_before_first_cultivate: GetPositionWithFeesResult = generate_ekubo_lp_fees(
-            test_config, ekubo_seed,
-        );
+            let position_before_first_cultivate: GetPositionWithFeesResult = generate_ekubo_lp_fees(
+                test_config, ekubo_seed,
+            );
 
-        let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
-
-        // Create the first TWAP order
-        cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
-        yin.transfer(cultivator.contract_address, excess_yin.into());
-
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        let first_liquidity_delta: u128 = cultivator.cultivate(Option::Some(asset));
-        assert!(first_liquidity_delta.is_non_zero(), "no liquidity added #1");
-
-        let next_ts: u64 = get_block_timestamp() + cultivator_contract::TWAMM_ORDER_PERIOD / 2;
-        start_cheat_block_timestamp_global(next_ts);
-
-        // Sanity check that first order has not completed
-        check_existing_order_completion(test_config, asset, ekubo_seed, false);
-
-        let position_before_second_cultivate: GetPositionWithFeesResult = generate_ekubo_lp_fees(
-            test_config, ekubo_seed,
-        );
-
-        if *create_excess_yin {
+            // Create the first TWAP order
             cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
             yin.transfer(cultivator.contract_address, excess_yin.into());
+
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            let first_liquidity_delta: u128 = if *specify_asset {
+                cultivator.cultivate(Option::Some(asset))
+            } else {
+                cultivator.cultivate(Option::None)
+            };
+            assert!(first_liquidity_delta.is_non_zero(), "no liquidity added #1");
+
+            let next_ts: u64 = get_block_timestamp() + cultivator_contract::TWAMM_ORDER_PERIOD / 2;
+            start_cheat_block_timestamp_global(next_ts);
+
+            // Sanity check that first order has not completed
+            check_existing_order_completion(test_config, asset, ekubo_seed, false);
+
+            let position_before_second_cultivate: GetPositionWithFeesResult =
+                generate_ekubo_lp_fees(
+                test_config, ekubo_seed,
+            );
+
+            if *create_excess_yin {
+                cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
+                yin.transfer(cultivator.contract_address, excess_yin.into());
+            }
+
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            let second_liquidity_delta: u128 = if *specify_asset {
+                cultivator.cultivate(Option::Some(asset))
+            } else {
+                cultivator.cultivate(Option::None)
+            };
+            assert!(second_liquidity_delta.is_non_zero(), "no liquidity added #2");
+
+            let position_key = PositionKey {
+                salt: ekubo_seed.token_id,
+                owner: mainnet::EKUBO_POSITIONS,
+                bounds: ekubo_seed.bounds,
+            };
+            let after_position_with_fees: GetPositionWithFeesResult = ekubo_core
+                .get_position_with_fees(ekubo_seed.pool_key, position_key);
+            assert!(after_position_with_fees.fees0.is_zero(), "fees not zeroed #1");
+            assert!(after_position_with_fees.fees1.is_zero(), "fees not zeroed #2");
+
+            // Excess yin should remain unused since there is an existing incomplete order
+            if *create_excess_yin {
+                let yin_balance: u256 = yin.balance_of(cultivator.contract_address);
+                assert!(yin_balance.is_non_zero(), "excess yin should be unused");
+            }
+
+            let order: Option<Order> = cultivator.get_order(asset);
+            assert!(order.is_some(), "order not created");
+            let order: Order = order.unwrap();
+
+            // Reset the state in Cultivator
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(2));
+            cultivator.prune(asset);
+            let extracted_yin_amt: u256 = cultivator.extract(mainnet::SHRINE);
+
+            assert_eq!(
+                ekubo_positions_nft.owner_of(ekubo_seed.token_id.into()), user, "wrong owner",
+            );
+            assert!(cultivator.get_order(asset).is_none(), "order is not pruned");
+
+            let mut expected_events = array![
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Cultivate(
+                        cultivator_contract::Cultivate {
+                            asset, seed: ekubo_seed, liquidity_delta: first_liquidity_delta,
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Cultivate(
+                        cultivator_contract::Cultivate {
+                            asset, seed: ekubo_seed, liquidity_delta: second_liquidity_delta,
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Collect(
+                        cultivator_contract::Collect {
+                            asset,
+                            fees: array![
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token0,
+                                    amount: position_before_first_cultivate.fees0,
+                                },
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token1,
+                                    amount: position_before_first_cultivate.fees1,
+                                },
+                            ]
+                                .span(),
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Collect(
+                        cultivator_contract::Collect {
+                            asset,
+                            fees: array![
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token0,
+                                    amount: position_before_second_cultivate.fees0,
+                                },
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token1,
+                                    amount: position_before_second_cultivate.fees1,
+                                },
+                            ]
+                                .span(),
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::OrderPlaced(
+                        cultivator_contract::OrderPlaced {
+                            asset,
+                            order_id: ekubo_seed.token_id,
+                            fee: ekubo_seed.pool_key.fee,
+                            end_time: order.end_time,
+                        },
+                    ),
+                ),
+                // Construct the event for forced closure of the order
+                // when pruning the asset below
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::OrderClosed(
+                        cultivator_contract::OrderClosed {
+                            asset,
+                            order_id: ekubo_seed.token_id,
+                            fee: ekubo_seed.pool_key.fee,
+                            end_time: order.end_time,
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Prune(
+                        cultivator_contract::Prune { asset, seed: ekubo_seed },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Extract(
+                        cultivator_contract::Extract {
+                            caller: user, asset: mainnet::SHRINE, amount: extracted_yin_amt,
+                        },
+                    ),
+                ),
+            ];
+
+            spy.assert_emitted(@expected_events);
         }
-
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        let second_liquidity_delta: u128 = cultivator.cultivate(Option::Some(asset));
-        assert!(second_liquidity_delta.is_non_zero(), "no liquidity added #2");
-
-        let position_key = PositionKey {
-            salt: ekubo_seed.token_id, owner: mainnet::EKUBO_POSITIONS, bounds: ekubo_seed.bounds,
-        };
-        let after_position_with_fees: GetPositionWithFeesResult = ekubo_core
-            .get_position_with_fees(ekubo_seed.pool_key, position_key);
-        assert!(after_position_with_fees.fees0.is_zero(), "fees not zeroed #1");
-        assert!(after_position_with_fees.fees1.is_zero(), "fees not zeroed #2");
-
-        // Excess yin should remain unused since there is an existing incomplete order
-        if *create_excess_yin {
-            let yin_balance: u256 = yin.balance_of(cultivator.contract_address);
-            assert!(yin_balance.is_non_zero(), "excess yin should be unused");
-        }
-
-        let order: Option<Order> = cultivator.get_order(asset);
-        assert!(order.is_some(), "order not created");
-        let order: Order = order.unwrap();
-
-        let mut expected_events = array![
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Cultivate(
-                    cultivator_contract::Cultivate {
-                        asset, seed: ekubo_seed, liquidity_delta: first_liquidity_delta,
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Cultivate(
-                    cultivator_contract::Cultivate {
-                        asset, seed: ekubo_seed, liquidity_delta: second_liquidity_delta,
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Collect(
-                    cultivator_contract::Collect {
-                        asset,
-                        assets: array![
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token0,
-                                amount: position_before_first_cultivate.fees0,
-                            },
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token1,
-                                amount: position_before_first_cultivate.fees1,
-                            },
-                        ]
-                            .span(),
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Collect(
-                    cultivator_contract::Collect {
-                        asset,
-                        assets: array![
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token0,
-                                amount: position_before_second_cultivate.fees0,
-                            },
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token1,
-                                amount: position_before_second_cultivate.fees1,
-                            },
-                        ]
-                            .span(),
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::OrderPlaced(
-                    cultivator_contract::OrderPlaced {
-                        asset,
-                        order_id: ekubo_seed.token_id,
-                        fee: ekubo_seed.pool_key.fee,
-                        end_time: order.end_time,
-                    },
-                ),
-            ),
-        ];
-        spy.assert_emitted(@expected_events);
     }
 }
 
 #[test]
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
-    for create_second_order in BOOL_PARAMETRIZED.span() {
-        let test_config = setup(Option::None);
-        let CultivatorTestConfig {
-            cultivator, yin, ekubo_core, ekubo_positions_nft, ..,
-        } = test_config;
-        let user = mainnet::MULTISIG;
-        let asset = mainnet::EKUBO;
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
 
-        let mut spy = spy_events();
+    let (ekubo_seed, _) = create_cash_ekubo_lp(test_config);
 
-        let (ekubo_seed, _) = create_cash_ekubo_lp(test_config);
+    let mut first_excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 3;
 
-        cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
-        ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
+    for specify_asset in BOOL_PARAMETRIZED.span() {
+        for create_second_order in BOOL_PARAMETRIZED.span() {
+            let mut spy = spy_events();
 
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        cultivator.plant(asset, ekubo_seed);
+            cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+            ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
 
-        let position_before_first_cultivate: GetPositionWithFeesResult = generate_ekubo_lp_fees(
-            test_config, ekubo_seed,
-        );
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            cultivator.plant(asset, ekubo_seed);
 
-        // Create the first TWAP order
-        cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
-        let first_excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
-        yin.transfer(cultivator.contract_address, first_excess_yin.into());
+            let position_before_first_cultivate: GetPositionWithFeesResult = generate_ekubo_lp_fees(
+                test_config, ekubo_seed,
+            );
 
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        let first_liquidity_delta: u128 = cultivator.cultivate(Option::Some(asset));
-        assert!(first_liquidity_delta.is_non_zero(), "no liquidity added #1");
-
-        let first_order: Option<Order> = cultivator.get_order(asset);
-        assert!(first_order.is_some(), "first order not created");
-        let first_order: Order = first_order.unwrap();
-
-        let next_ts: u64 = get_block_timestamp() + cultivator_contract::TWAMM_ORDER_PERIOD + 1;
-        start_cheat_block_timestamp_global(next_ts);
-
-        // Sanity check that first order has completed
-        check_existing_order_completion(test_config, asset, ekubo_seed, true);
-
-        let position_before_second_cultivate: GetPositionWithFeesResult = generate_ekubo_lp_fees(
-            test_config, ekubo_seed,
-        );
-
-        if *create_second_order {
-            let second_excess_yin: u128 = first_excess_yin * 2;
+            // Create the first TWAP order
             cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
-            yin.transfer(cultivator.contract_address, second_excess_yin.into());
-        }
+            yin.transfer(cultivator.contract_address, first_excess_yin.into());
 
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        let second_liquidity_delta: u128 = cultivator.cultivate(Option::Some(asset));
-        assert!(second_liquidity_delta.is_non_zero(), "no liquidity added #2");
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            let first_liquidity_delta: u128 = if *specify_asset {
+                cultivator.cultivate(Option::Some(asset))
+            } else {
+                cultivator.cultivate(Option::None)
+            };
+            assert!(first_liquidity_delta.is_non_zero(), "no liquidity added #1");
 
-        let position_key = PositionKey {
-            salt: ekubo_seed.token_id, owner: mainnet::EKUBO_POSITIONS, bounds: ekubo_seed.bounds,
-        };
-        let after_position_with_fees: GetPositionWithFeesResult = ekubo_core
-            .get_position_with_fees(ekubo_seed.pool_key, position_key);
-        assert!(after_position_with_fees.fees0.is_zero(), "fees not zeroed #1");
-        assert!(after_position_with_fees.fees1.is_zero(), "fees not zeroed #2");
+            let first_order: Option<Order> = cultivator.get_order(asset);
+            assert!(first_order.is_some(), "first order not created");
+            let first_order: Order = first_order.unwrap();
 
-        let mut expected_events = array![
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Cultivate(
-                    cultivator_contract::Cultivate {
-                        asset, seed: ekubo_seed, liquidity_delta: first_liquidity_delta,
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Cultivate(
-                    cultivator_contract::Cultivate {
-                        asset, seed: ekubo_seed, liquidity_delta: second_liquidity_delta,
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Collect(
-                    cultivator_contract::Collect {
-                        asset,
-                        assets: array![
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token0,
-                                amount: position_before_first_cultivate.fees0,
-                            },
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token1,
-                                amount: position_before_first_cultivate.fees1,
-                            },
-                        ]
-                            .span(),
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Collect(
-                    cultivator_contract::Collect {
-                        asset,
-                        assets: array![
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token0,
-                                amount: position_before_second_cultivate.fees0,
-                            },
-                            AssetBalance {
-                                address: ekubo_seed.pool_key.token1,
-                                amount: position_before_second_cultivate.fees1,
-                            },
-                        ]
-                            .span(),
-                    },
-                ),
-            ),
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::OrderPlaced(
-                    cultivator_contract::OrderPlaced {
-                        asset,
-                        order_id: ekubo_seed.token_id,
-                        fee: ekubo_seed.pool_key.fee,
-                        end_time: first_order.end_time,
-                    },
-                ),
-            ),
-        ];
+            let next_ts: u64 = get_block_timestamp() + cultivator_contract::TWAMM_ORDER_PERIOD + 1;
+            start_cheat_block_timestamp_global(next_ts);
 
-        let second_order: Option<Order> = cultivator.get_order(asset);
-        if *create_second_order {
-            assert!(second_order.is_some(), "second order not created");
-            let second_order: Order = second_order.unwrap();
+            // Sanity check that first order has completed
+            check_existing_order_completion(test_config, asset, ekubo_seed, true);
+
+            let position_before_second_cultivate: GetPositionWithFeesResult =
+                generate_ekubo_lp_fees(
+                test_config, ekubo_seed,
+            );
+
+            if *create_second_order {
+                let second_excess_yin: u128 = first_excess_yin * 2;
+                cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
+                yin.transfer(cultivator.contract_address, second_excess_yin.into());
+            }
+
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            let second_liquidity_delta: u128 = if *specify_asset {
+                cultivator.cultivate(Option::Some(asset))
+            } else {
+                cultivator.cultivate(Option::None)
+            };
+            assert!(second_liquidity_delta.is_non_zero(), "no liquidity added #2");
+
+            let position_key = PositionKey {
+                salt: ekubo_seed.token_id,
+                owner: mainnet::EKUBO_POSITIONS,
+                bounds: ekubo_seed.bounds,
+            };
+            let after_position_with_fees: GetPositionWithFeesResult = ekubo_core
+                .get_position_with_fees(ekubo_seed.pool_key, position_key);
+            assert!(after_position_with_fees.fees0.is_zero(), "fees not zeroed #1");
+            assert!(after_position_with_fees.fees1.is_zero(), "fees not zeroed #2");
+
+            let mut expected_events = array![
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Cultivate(
+                        cultivator_contract::Cultivate {
+                            asset, seed: ekubo_seed, liquidity_delta: first_liquidity_delta,
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Cultivate(
+                        cultivator_contract::Cultivate {
+                            asset, seed: ekubo_seed, liquidity_delta: second_liquidity_delta,
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Collect(
+                        cultivator_contract::Collect {
+                            asset,
+                            fees: array![
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token0,
+                                    amount: position_before_first_cultivate.fees0,
+                                },
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token1,
+                                    amount: position_before_first_cultivate.fees1,
+                                },
+                            ]
+                                .span(),
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Collect(
+                        cultivator_contract::Collect {
+                            asset,
+                            fees: array![
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token0,
+                                    amount: position_before_second_cultivate.fees0,
+                                },
+                                AssetBalance {
+                                    address: ekubo_seed.pool_key.token1,
+                                    amount: position_before_second_cultivate.fees1,
+                                },
+                            ]
+                                .span(),
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::OrderPlaced(
+                        cultivator_contract::OrderPlaced {
+                            asset,
+                            order_id: ekubo_seed.token_id,
+                            fee: ekubo_seed.pool_key.fee,
+                            end_time: first_order.end_time,
+                        },
+                    ),
+                ),
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::OrderClosed(
+                        cultivator_contract::OrderClosed {
+                            asset,
+                            order_id: ekubo_seed.token_id,
+                            fee: ekubo_seed.pool_key.fee,
+                            end_time: first_order.end_time,
+                        },
+                    ),
+                ),
+            ];
+
+            let second_order: Option<Order> = cultivator.get_order(asset);
+            if *create_second_order {
+                assert!(second_order.is_some(), "second order not created");
+                let second_order: Order = second_order.unwrap();
+                expected_events
+                    .append(
+                        (
+                            cultivator.contract_address,
+                            cultivator_contract::Event::OrderPlaced(
+                                cultivator_contract::OrderPlaced {
+                                    asset,
+                                    order_id: ekubo_seed.token_id,
+                                    fee: ekubo_seed.pool_key.fee,
+                                    end_time: second_order.end_time,
+                                },
+                            ),
+                        ),
+                    );
+                expected_events
+                    .append(
+                        // Construct the event for forced closure of the order
+                        // when pruning the asset below
+                        (
+                            cultivator.contract_address,
+                            cultivator_contract::Event::OrderClosed(
+                                cultivator_contract::OrderClosed {
+                                    asset,
+                                    order_id: ekubo_seed.token_id,
+                                    fee: ekubo_seed.pool_key.fee,
+                                    end_time: second_order.end_time,
+                                },
+                            ),
+                        ),
+                    );
+            } else {
+                assert!(second_order.is_none(), "second order created");
+            }
+
+            // Reset the state in Cultivator
+            cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(2));
+            cultivator.prune(asset);
+            let extracted_yin_amt: u256 = cultivator.extract(mainnet::SHRINE);
+
+            assert_eq!(
+                ekubo_positions_nft.owner_of(ekubo_seed.token_id.into()), user, "wrong owner",
+            );
+            let order: Option<Order> = cultivator.get_order(asset);
+            assert!(order.is_none(), "order is not pruned");
+
             expected_events
                 .append(
                     (
                         cultivator.contract_address,
-                        cultivator_contract::Event::OrderPlaced(
-                            cultivator_contract::OrderPlaced {
-                                asset,
-                                order_id: ekubo_seed.token_id,
-                                fee: ekubo_seed.pool_key.fee,
-                                end_time: second_order.end_time,
+                        cultivator_contract::Event::Prune(
+                            cultivator_contract::Prune { asset, seed: ekubo_seed },
+                        ),
+                    ),
+                );
+            expected_events
+                .append(
+                    (
+                        cultivator.contract_address,
+                        cultivator_contract::Event::Extract(
+                            cultivator_contract::Extract {
+                                caller: user, asset: mainnet::SHRINE, amount: extracted_yin_amt,
                             },
                         ),
                     ),
                 );
-        } else {
-            assert!(second_order.is_none(), "second order created");
-        }
 
-        spy.assert_emitted(@expected_events);
+            spy.assert_emitted(@expected_events);
+
+            // Increase the amount of excess yin because as the TWAP orders are completed,
+            // more yin is required to autocompound the LPs during `cultivate`.
+            first_excess_yin *= 2;
+        }
     }
 }
