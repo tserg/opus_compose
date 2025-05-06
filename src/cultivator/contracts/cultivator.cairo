@@ -94,7 +94,7 @@ pub mod cultivator {
     pub struct Collect {
         #[key]
         pub asset: ContractAddress,
-        pub assets: Span<AssetBalance>,
+        pub fees: Span<AssetBalance>,
     }
 
     #[derive(Copy, Drop, starknet::Event, PartialEq)]
@@ -367,7 +367,7 @@ pub mod cultivator {
         }
 
         // Transfer the contract's balance for a specific asset to the caller
-        fn extract(ref self: ContractState, asset: ContractAddress) {
+        fn extract(ref self: ContractState, asset: ContractAddress) -> u256 {
             self.access_control.assert_has_role(cultivator_roles::EXTRACT);
 
             let asset_erc20 = IERC20Dispatcher { contract_address: asset };
@@ -377,6 +377,8 @@ pub mod cultivator {
             asset_erc20.transfer(caller, amount);
 
             self.emit(Extract { caller, asset, amount });
+
+            amount
         }
     }
 
@@ -429,7 +431,7 @@ pub mod cultivator {
                 .emit(
                     Collect {
                         asset: self.get_asset_from_seed(seed),
-                        assets: array![
+                        fees: array![
                             AssetBalance { address: seed.pool_key.token0, amount: fees0 },
                             AssetBalance { address: seed.pool_key.token1, amount: fees1 },
                         ]
