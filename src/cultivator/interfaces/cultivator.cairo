@@ -30,6 +30,6 @@ pub trait ICultivator<TContractState> {
     fn collect(ref self: TContractState);
 
     // Transfer the contract's balance for a specific asset to the caller
-    fn extract(ref self: TContractState, asset: ContractAddress);
+    fn extract(ref self: TContractState, asset: ContractAddress) -> u256;
 }
 
