@@ -16,6 +16,11 @@ pub mod mainnet {
         .try_into()
         .unwrap();
 
+    pub const LORDS_WHALE: ContractAddress =
+        0x00992acf50dba66f87d8cafffbbc3cdbbec5f8f514b5014f6d4d75e6b8789153
+        .try_into()
+        .unwrap();
+
     // Tokens
     //
     // Unless otherwise stated, token's address is available at:
@@ -35,6 +40,10 @@ pub mod mainnet {
         .unwrap();
     pub const EKUBO: ContractAddress =
         0x075afe6402ad5a5c20dd25e10ec3b3986acaa647b77e4ae24b0cbc9a54a27a87
+        .try_into()
+        .unwrap();
+    pub const LORDS: ContractAddress =
+        0x0124aeb495b947201f5fac96fd1138e326ad86195b98df6dec9009158a533b49
         .try_into()
         .unwrap();
 
