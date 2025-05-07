@@ -437,6 +437,10 @@ pub mod cultivator {
                 .read()
                 .collect_fees(seed.token_id.into(), seed.pool_key, seed.bounds);
 
+            if fees0.is_zero() && fees1.is_zero() {
+                return;
+            }
+
             self
                 .emit(
                     Collect {
