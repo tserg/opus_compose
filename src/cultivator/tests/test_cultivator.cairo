@@ -1,8 +1,7 @@
 use core::num::traits::Zero;
-use ekubo::interfaces::core::{GetPositionWithFeesResult, ICoreDispatcherTrait};
+use ekubo::interfaces::core::GetPositionWithFeesResult;
 use ekubo::interfaces::erc721::IERC721DispatcherTrait;
 use ekubo::interfaces::positions::IPositionsDispatcherTrait;
-use ekubo::types::keys::PositionKey;
 use opus::types::AssetBalance;
 use opus_compose::addresses::mainnet;
 use opus_compose::cultivator::contracts::cultivator::cultivator as cultivator_contract;
@@ -11,7 +10,7 @@ use opus_compose::cultivator::tests::utils::cultivator_utils::{
     ASSETS, BAD_GUY, CultivatorTestConfig, assert_pool_fees_collected, check_existing_order_completion,
     create_lp_for_asset, create_lp_for_assets, generate_ekubo_lp_fees, setup,
 };
-use opus_compose::cultivator::types::{Order, Seed};
+use opus_compose::cultivator::types::Order;
 use opus_compose::interfaces::erc20::IERC20DispatcherTrait;
 use snforge_std::{
     CheatSpan, EventsFilterTrait, EventSpyAssertionsTrait, EventSpyTrait, cheat_caller_address, spy_events,
@@ -287,9 +286,8 @@ fn test_prune_no_existing_position() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_no_asset() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, .. } = test_config;
     let user = mainnet::MULTISIG;
-    let asset = mainnet::EKUBO;
 
     cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
     assert!(cultivator.cultivate(Option::None).is_zero(), "should be zero liquidity delta");
@@ -299,7 +297,7 @@ fn test_cultivate_no_asset() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_single_asset_without_existing_twamm_order() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
     let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
@@ -442,7 +440,7 @@ fn test_cultivate_single_asset_without_existing_twamm_order() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
     let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 3;
@@ -625,7 +623,7 @@ fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
@@ -852,7 +850,7 @@ fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_multiple_asset() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, yin, .. } = test_config;
     let user = mainnet::MULTISIG;
     let assets = ASSETS.span();
 
@@ -955,7 +953,7 @@ fn test_cultivate_unauthorized() {
 #[should_panic(expected: "CUL: No seed for asset")]
 fn test_cultivate_unplanted_asset() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
@@ -971,7 +969,7 @@ fn test_cultivate_unplanted_asset() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_collect_no_assets() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, .. } = test_config;
     let user = mainnet::MULTISIG;
 
     let mut spy = spy_events();
@@ -987,10 +985,9 @@ fn test_collect_no_assets() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_collect_single_asset_without_fees() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
-    let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
 
     let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
@@ -1012,7 +1009,7 @@ fn test_collect_single_asset_without_fees() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_collect_multiple_assets_with_fees() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, .. } = test_config;
     let user = mainnet::MULTISIG;
     let assets = ASSETS.span();
 
@@ -1068,7 +1065,7 @@ fn test_collect_multiple_assets_with_fees() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_extract() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, yin, .. } = test_config;
     let user = mainnet::MULTISIG;
 
     let mut spy = spy_events();
@@ -1078,11 +1075,11 @@ fn test_extract() {
     assert!(extracted.is_zero(), "should be zero");
 
     let injection: u256 = (10 * WAD_ONE).into();
-    cheat_caller_address(test_config.yin.contract_address, user, CheatSpan::TargetCalls(1));
+    cheat_caller_address(yin.contract_address, user, CheatSpan::TargetCalls(1));
     yin.transfer(cultivator.contract_address, injection);
 
     cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-    let extracted = cultivator.extract(test_config.yin.contract_address);
+    let extracted = cultivator.extract(yin.contract_address);
     assert!(extracted == injection, "extracted amount mismatch");
 
     let expected_events = array![
@@ -1091,7 +1088,7 @@ fn test_extract() {
             cultivator_contract::Event::Extract(
                 cultivator_contract::Extract {
                     caller: user,
-                    asset: test_config.yin.contract_address,
+                    asset: yin.contract_address,
                     amount: injection,
                 },
             ),
@@ -1105,7 +1102,7 @@ fn test_extract() {
             cultivator_contract::Event::Extract(
                 cultivator_contract::Extract {
                     caller: user,
-                    asset: test_config.yin.contract_address,
+                    asset: yin.contract_address,
                     amount: 0,
                 },
             ),
@@ -1120,7 +1117,6 @@ fn test_extract() {
 fn test_extract_unauthorized() {
     let test_config = setup(Option::None);
     let CultivatorTestConfig { cultivator, .. } = test_config;
-    let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
     cheat_caller_address(cultivator.contract_address, BAD_GUY, CheatSpan::TargetCalls(1));

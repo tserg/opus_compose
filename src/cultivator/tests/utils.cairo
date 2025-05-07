@@ -281,7 +281,7 @@ pub mod cultivator_utils {
             .get_order_info(seed.token_id, order_key);
         if should_be_completed {
             assert!(order_info.remaining_sell_amount.is_zero(), "order not completed");
-        } else {
+        } else if !should_be_completed {
             assert!(order_info.remaining_sell_amount.is_non_zero(), "order completed");
         }
     }
