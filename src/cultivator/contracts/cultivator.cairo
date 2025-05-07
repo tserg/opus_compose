@@ -261,7 +261,10 @@ pub mod cultivator {
             self.emit(Prune { asset, seed });
         }
 
-        // Returns the liquidity added
+        // Returns the liquidity added to the LP.
+        // Returns 0 if:
+        // - the asset is not specified and no assets were planted; or
+        // - the contract's balance of yin or asset is zero after collecting LP fees.
         fn cultivate(ref self: ContractState, asset: Option<ContractAddress>) -> u128 {
             self.access_control.assert_has_role(cultivator_roles::CULTIVATE);
 
@@ -311,6 +314,12 @@ pub mod cultivator {
             let can_create_new_order: bool = self.close_twamm_order(asset, asset_id, seed, false);
 
             // Provide liquidity
+            let yin_balance = yin.balance_of(cultivator);
+            let asset_balance = asset_erc20.balance_of(cultivator);
+            if yin_balance.is_zero() || asset_balance.is_zero() {
+                return 0;
+            }
+
             yin.transfer(ekubo_positions.contract_address, yin.balance_of(cultivator));
             asset_erc20
                 .transfer(ekubo_positions.contract_address, asset_erc20.balance_of(cultivator));
@@ -427,6 +436,7 @@ pub mod cultivator {
                 .ekubo_positions
                 .read()
                 .collect_fees(seed.token_id.into(), seed.pool_key, seed.bounds);
+
             self
                 .emit(
                     Collect {
