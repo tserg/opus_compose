@@ -4,7 +4,7 @@ pub mod cultivator_utils {
     use ekubo::components::clear::{IClearDispatcher, IClearDispatcherTrait};
     use ekubo::interfaces::core::{GetPositionWithFeesResult, ICoreDispatcher, ICoreDispatcherTrait};
     use ekubo::interfaces::erc20::IERC20Dispatcher as EkuboERC20Dispatcher;
-    use ekubo::interfaces::erc721::IERC721Dispatcher;
+    use ekubo::interfaces::erc721::{IERC721Dispatcher, IERC721DispatcherTrait};
     use ekubo::interfaces::extensions::twamm::{OrderInfo, OrderKey};
     use ekubo::interfaces::positions::{IPositionsDispatcher, IPositionsDispatcherTrait};
     use ekubo::interfaces::router::{
@@ -51,6 +51,8 @@ pub mod cultivator_utils {
     const CASH_SWAP_AMT: u128 = WAD_ONE;
 
     pub const BAD_GUY: ContractAddress = 'bad guy'.try_into().unwrap();
+
+    pub const ASSETS: [ContractAddress; 3] = [mainnet::EKUBO, mainnet::LORDS, mainnet::STRK];
 
     //
     // Test setup helpers
@@ -110,9 +112,8 @@ pub mod cultivator_utils {
     //
 
     pub fn create_lp_for_asset(
-        test_config: CultivatorTestConfig, asset: ContractAddress,
+        test_config: CultivatorTestConfig, user: ContractAddress, asset: ContractAddress,
     ) -> (Seed, u128) {
-        let user = mainnet::MULTISIG;
         let pool_key = construct_pool_key(asset);
 
         cheat_caller_address(test_config.yin.contract_address, user, CheatSpan::TargetCalls(1));
@@ -146,6 +147,23 @@ pub mod cultivator_utils {
         (Seed { token_id, pool_key, bounds: TWAMM_BOUNDS }, liquidity)
     }
 
+    pub fn create_lp_for_assets(test_config: CultivatorTestConfig, user: ContractAddress, assets: Span<ContractAddress>) -> Span<Seed> {
+        let mut seeds: Array<Seed> = Default::default();
+
+        for asset in assets {
+            let (seed, _) = create_lp_for_asset(test_config, user, *asset);
+            seeds.append(seed);
+
+            cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+            test_config.ekubo_positions_nft.approve(test_config.cultivator.contract_address, seed.token_id.into());
+
+            cheat_caller_address(test_config.cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            test_config.cultivator.plant(*asset, seed);
+        }
+
+        seeds.span()
+    }
+
     // Returns the LP position after swaps
     pub fn generate_ekubo_lp_fees(
         test_config: CultivatorTestConfig, seed: Seed,
@@ -164,12 +182,14 @@ pub mod cultivator_utils {
         cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
         test_config.yin.transfer(mainnet::EKUBO_ROUTER, CASH_SWAP_AMT.into());
 
+        let ekubo_router = IRouterDispatcher { contract_address: mainnet::EKUBO_ROUTER };
+
         // yin is token0
         if seed.pool_key.token0 == mainnet::SHRINE {
             let asset = seed.pool_key.token1;
 
             cheat_caller_address(mainnet::EKUBO_ROUTER, user, CheatSpan::TargetCalls(1));
-            let delta: Delta = test_config.ekubo_router
+            let delta: Delta = ekubo_router
                 .swap(
                     node: RouteNode {
                         pool_key: seed
@@ -184,7 +204,7 @@ pub mod cultivator_utils {
                 );
 
             cheat_caller_address(mainnet::EKUBO_ROUTER, user, CheatSpan::TargetCalls(1));
-            test_config.ekubo_router
+            ekubo_router
                 .swap(
                     node: RouteNode {
                         pool_key: seed
@@ -199,7 +219,7 @@ pub mod cultivator_utils {
             let asset = seed.pool_key.token0;
 
             cheat_caller_address(mainnet::EKUBO_ROUTER, user, CheatSpan::TargetCalls(1));
-            let delta: Delta = test_config.ekubo_router
+            let delta: Delta = ekubo_router
                 .swap(
                     node: RouteNode {
                         pool_key: seed
@@ -213,9 +233,8 @@ pub mod cultivator_utils {
                     },
                 );
 
-            println!("first swap completed");
             cheat_caller_address(mainnet::EKUBO_ROUTER, user, CheatSpan::TargetCalls(1));
-            test_config.
+            ekubo_router
                 .swap(
                     node: RouteNode {
                         pool_key: seed

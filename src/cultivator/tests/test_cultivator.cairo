@@ -8,13 +8,13 @@ use opus_compose::addresses::mainnet;
 use opus_compose::cultivator::contracts::cultivator::cultivator as cultivator_contract;
 use opus_compose::cultivator::interfaces::cultivator::ICultivatorDispatcherTrait;
 use opus_compose::cultivator::tests::utils::cultivator_utils::{
-    BAD_GUY, CultivatorTestConfig, assert_pool_fees_collected, check_existing_order_completion,
-    create_lp_for_asset, generate_ekubo_lp_fees, setup,
+    ASSETS, BAD_GUY, CultivatorTestConfig, assert_pool_fees_collected, check_existing_order_completion,
+    create_lp_for_asset, create_lp_for_assets, generate_ekubo_lp_fees, setup,
 };
 use opus_compose::cultivator::types::{Order, Seed};
 use opus_compose::interfaces::erc20::IERC20DispatcherTrait;
 use snforge_std::{
-    CheatSpan, EventSpyAssertionsTrait, cheat_caller_address, spy_events,
+    CheatSpan, EventsFilterTrait, EventSpyAssertionsTrait, EventSpyTrait, cheat_caller_address, spy_events,
     start_cheat_block_timestamp_global,
 };
 use starknet::{ContractAddress, get_block_timestamp};
@@ -45,7 +45,7 @@ fn test_plant() {
 
     let mut spy = spy_events();
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
     ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
@@ -78,11 +78,12 @@ fn test_plant() {
 fn test_plant_unauthorized() {
     let test_config = setup(Option::None);
     let CultivatorTestConfig { cultivator, .. } = test_config;
+    let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
     cheat_caller_address(cultivator.contract_address, BAD_GUY, CheatSpan::TargetCalls(1));
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     cultivator.plant(asset, ekubo_seed);
 }
@@ -97,7 +98,7 @@ fn test_plant_not_owner() {
     let another: ContractAddress = 'another'.try_into().unwrap();
     let asset = mainnet::EKUBO;
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
     ekubo_positions_nft.transfer_from(user, another, ekubo_seed.token_id.into());
@@ -117,7 +118,7 @@ fn test_plant_pool_key_assets_mismatch() {
     let asset = mainnet::EKUBO;
 
     // Get a valid seed
-    let (mut ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (mut ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     // Modify the seed's pool key to have mismatched assets
     ekubo_seed.pool_key.token0 = 'different_asset'.try_into().unwrap();
@@ -140,7 +141,7 @@ fn test_plant_pool_no_liquidity() {
     let asset = mainnet::EKUBO;
 
     // Get a valid seed
-    let (ekubo_seed, ekubo_seed_liquidity) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, ekubo_seed_liquidity) = create_lp_for_asset(test_config, user, asset);
 
     cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
     ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
@@ -166,7 +167,7 @@ fn test_plant_existing_position() {
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     // First plant - should succeed
     cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
@@ -176,7 +177,7 @@ fn test_plant_existing_position() {
     cultivator.plant(asset, ekubo_seed);
 
     // Create another seed for the same asset - could be a different position token
-    let (another_ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (another_ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     // Try to plant again for the same asset
     cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
@@ -196,7 +197,7 @@ fn test_plant_token_not_approved() {
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
 
@@ -217,7 +218,7 @@ fn test_prune() {
 
     let mut spy = spy_events();
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
     ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
@@ -251,7 +252,7 @@ fn test_prune_unauthorized() {
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
     ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
@@ -302,7 +303,7 @@ fn test_cultivate_single_asset_without_existing_twamm_order() {
     let asset = mainnet::EKUBO;
     let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     for specify_asset in BOOL_PARAMETRIZED.span() {
         for create_twap_order in BOOL_PARAMETRIZED.span() {
@@ -445,7 +446,7 @@ fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
     let asset = mainnet::EKUBO;
     let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 3;
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     for specify_asset in BOOL_PARAMETRIZED.span() {
         for create_excess_yin in BOOL_PARAMETRIZED.span() {
@@ -627,7 +628,7 @@ fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
-    let (ekubo_seed, _) = create_lp_for_asset(test_config, asset);
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
     let mut first_excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 3;
 
@@ -852,26 +853,14 @@ fn test_cultivate_multiple_asset() {
     let test_config = setup(Option::None);
     let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
-    let assets: Span<ContractAddress> = array![mainnet::EKUBO, mainnet::LORDS, mainnet::STRK]
-        .span();
-    let mut seeds: Array<Seed> = Default::default();
+    let assets = ASSETS.span();
 
-    for asset in assets {
-        let (seed, _) = create_lp_for_asset(test_config, *asset);
-        seeds.append(seed);
-
-        cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
-        ekubo_positions_nft.approve(cultivator.contract_address, seed.token_id.into());
-
-        cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        cultivator.plant(*asset, seed);
-    }
+    let seeds = create_lp_for_assets(test_config, user, assets);
 
     // Block timestamp is 1745907410
     // Expected modulo order: 2, 0, 1
     // Expected asset ids: 3, 1, 2
 
-    let seeds = seeds.span();
     let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
 
     let mut expected_asset_ids: Span<usize> = array![3, 1, 2].span();
@@ -971,4 +960,101 @@ fn test_cultivate_unplanted_asset() {
 
     cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
     cultivator.cultivate(Option::Some(asset));
+}
+
+//
+// Collect
+//
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+fn test_collect_no_assets() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+
+    let mut spy = spy_events();
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    cultivator.collect();
+
+    let events = spy.get_events();
+    assert!(events.events.len().is_zero(), "should be zero events");
+}
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+fn test_collect_single_asset_without_fees() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+    let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
+
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
+
+    cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+    ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(2));
+    cultivator.plant(asset, ekubo_seed);
+
+    let mut spy = spy_events();
+
+    cultivator.collect();
+
+    let cultivator_events = spy.get_events().emitted_by(cultivator.contract_address);
+    assert!(cultivator_events.events.len().is_zero(), "should be zero events");
+}
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+fn test_collect_multiple_assets_with_fees() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let assets = ASSETS.span();
+
+    let seeds = create_lp_for_assets(test_config, user, assets);
+
+    let mut expected_events: Array<(ContractAddress, cultivator_contract::Event)> = Default::default();
+
+    let mut spy = spy_events();
+    let mut assets_copy = assets;
+    for seed in seeds {
+        let before: GetPositionWithFeesResult = generate_ekubo_lp_fees(
+            test_config, *seed,
+        );
+
+        let asset = *assets_copy.pop_front().unwrap();
+        expected_events.append(
+            (
+                cultivator.contract_address,
+                cultivator_contract::Event::Collect(
+                    cultivator_contract::Collect {
+                        asset,
+                        fees: array![
+                            AssetBalance {
+                                address: *seed.pool_key.token0,
+                                amount: before.fees0,
+                            },
+                            AssetBalance {
+                                address: *seed.pool_key.token1,
+                                amount: before.fees1,
+                            },
+                        ]
+                            .span(),
+                    },
+                ),
+            ),
+        );
+    }    
+    
+    cultivator.collect();
+
+    for seed in seeds {
+        assert_pool_fees_collected(test_config, *seed);
+    }
+
+    spy.assert_emitted(@expected_events);
 }
