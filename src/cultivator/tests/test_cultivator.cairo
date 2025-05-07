@@ -18,6 +18,7 @@ use snforge_std::{
     start_cheat_block_timestamp_global,
 };
 use starknet::{ContractAddress, get_block_timestamp};
+use wadray::WAD_ONE;
 
 
 const BOOL_PARAMETRIZED: [bool; 2] = [true, false];
@@ -1057,4 +1058,71 @@ fn test_collect_multiple_assets_with_fees() {
     }
 
     spy.assert_emitted(@expected_events);
+}
+
+//
+// Extract
+//
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+fn test_extract() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_core, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+
+    let mut spy = spy_events();
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    let extracted = cultivator.extract(test_config.yin.contract_address);
+    assert!(extracted.is_zero(), "should be zero");
+
+    let injection: u256 = (10 * WAD_ONE).into();
+    cheat_caller_address(test_config.yin.contract_address, user, CheatSpan::TargetCalls(1));
+    yin.transfer(cultivator.contract_address, injection);
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    let extracted = cultivator.extract(test_config.yin.contract_address);
+    assert!(extracted == injection, "extracted amount mismatch");
+
+    let expected_events = array![
+        (
+            cultivator.contract_address,
+            cultivator_contract::Event::Extract(
+                cultivator_contract::Extract {
+                    caller: user,
+                    asset: test_config.yin.contract_address,
+                    amount: injection,
+                },
+            ),
+        )
+    ];
+    spy.assert_emitted(@expected_events);
+
+    let should_not_emit = array![
+        (
+            cultivator.contract_address,
+            cultivator_contract::Event::Extract(
+                cultivator_contract::Extract {
+                    caller: user,
+                    asset: test_config.yin.contract_address,
+                    amount: 0,
+                },
+            ),
+        )
+    ];
+    spy.assert_not_emitted(@should_not_emit);
+}
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+#[should_panic(expected: 'Caller missing role')]
+fn test_extract_unauthorized() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+
+    cheat_caller_address(cultivator.contract_address, BAD_GUY, CheatSpan::TargetCalls(1));
+    cultivator.extract(asset);
 }
