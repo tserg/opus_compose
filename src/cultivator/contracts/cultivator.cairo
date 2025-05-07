@@ -26,6 +26,8 @@ pub mod cultivator {
     // Constants
     ///
 
+    const LOOP_START: u64 = 1;
+
     pub const TWAMM_ORDER_STEP_SIZE: u64 = 65536;
     pub const TWAMM_ORDER_PERIOD: u64 = 131072; // ~18 to 36 hours
     pub const YIN_CULTIVATE_THRESHOLD: u128 = 10 * WAD_ONE;
@@ -165,13 +167,14 @@ pub mod cultivator {
     impl ICultivatorImpl of ICultivator<ContractState> {
         // Returns a list of assets with active positions
         fn get_assets(self: @ContractState) -> Span<ContractAddress> {
-            let mut idx: u64 = self.assets_count.read();
+            let mut idx: u64 = LOOP_START;
+            let loop_end: u64 = self.assets_count.read() + LOOP_START;
             let mut assets: Array<ContractAddress> = Default::default();
-            while idx != 0 {
+            while idx != loop_end {
                 if let Some(seed) = self.get_seed_helper(idx) {
                     assets.append(self.get_asset_from_seed(seed));
                 }
-                idx -= 1;
+                idx += 1;
             }
             assets.span()
         }
@@ -366,12 +369,13 @@ pub mod cultivator {
 
         // Withdraw all LP fees to this contract
         fn collect(ref self: ContractState) {
-            let mut idx: u64 = self.assets_count.read();
-            while idx != 0 {
+            let mut idx: u64 = LOOP_START;
+            let loop_end: u64 = self.assets_count.read() + LOOP_START;
+            while idx != loop_end {
                 if let Some(seed) = self.get_seed_helper(idx) {
                     self.collect_fees_helper(seed);
                 }
-                idx -= 1;
+                idx += 1;
             }
         }
 

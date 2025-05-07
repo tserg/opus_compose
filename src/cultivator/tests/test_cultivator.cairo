@@ -8,7 +8,7 @@ use opus_compose::cultivator::contracts::cultivator::cultivator as cultivator_co
 use opus_compose::cultivator::interfaces::cultivator::ICultivatorDispatcherTrait;
 use opus_compose::cultivator::tests::utils::cultivator_utils::{
     ASSETS, BAD_GUY, CultivatorTestConfig, assert_pool_fees_collected, check_existing_order_completion,
-    create_lp_for_asset, create_lp_for_assets, generate_ekubo_lp_fees, setup,
+    create_lp_for_asset, create_lp_and_plant_assets, generate_ekubo_lp_fees, setup,
 };
 use opus_compose::cultivator::types::Order;
 use opus_compose::interfaces::erc20::IERC20DispatcherTrait;
@@ -854,7 +854,8 @@ fn test_cultivate_multiple_asset() {
     let user = mainnet::MULTISIG;
     let assets = ASSETS.span();
 
-    let seeds = create_lp_for_assets(test_config, user, assets);
+    let seeds = create_lp_and_plant_assets(test_config, user, assets);
+    assert!(cultivator.get_assets() == assets, "wrong assets");
 
     // Block timestamp is 1745907410
     // Expected modulo order: 2, 0, 1
@@ -1013,7 +1014,7 @@ fn test_collect_multiple_assets_with_fees() {
     let user = mainnet::MULTISIG;
     let assets = ASSETS.span();
 
-    let seeds = create_lp_for_assets(test_config, user, assets);
+    let seeds = create_lp_and_plant_assets(test_config, user, assets);
 
     let mut expected_events: Array<(ContractAddress, cultivator_contract::Event)> = Default::default();
 

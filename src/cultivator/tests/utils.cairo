@@ -147,7 +147,7 @@ pub mod cultivator_utils {
         (Seed { token_id, pool_key, bounds: TWAMM_BOUNDS }, liquidity)
     }
 
-    pub fn create_lp_for_assets(test_config: CultivatorTestConfig, user: ContractAddress, assets: Span<ContractAddress>) -> Span<Seed> {
+    pub fn create_lp_and_plant_assets(test_config: CultivatorTestConfig, user: ContractAddress, assets: Span<ContractAddress>) -> Span<Seed> {
         let mut seeds: Array<Seed> = Default::default();
 
         for asset in assets {
