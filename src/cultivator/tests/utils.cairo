@@ -147,7 +147,9 @@ pub mod cultivator_utils {
         (Seed { token_id, pool_key, bounds: TWAMM_BOUNDS }, liquidity)
     }
 
-    pub fn create_lp_and_plant_assets(test_config: CultivatorTestConfig, user: ContractAddress, assets: Span<ContractAddress>) -> Span<Seed> {
+    pub fn create_lp_and_plant_assets(
+        test_config: CultivatorTestConfig, user: ContractAddress, assets: Span<ContractAddress>,
+    ) -> Span<Seed> {
         let mut seeds: Array<Seed> = Default::default();
 
         for asset in assets {
@@ -155,9 +157,13 @@ pub mod cultivator_utils {
             seeds.append(seed);
 
             cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
-            test_config.ekubo_positions_nft.approve(test_config.cultivator.contract_address, seed.token_id.into());
+            test_config
+                .ekubo_positions_nft
+                .approve(test_config.cultivator.contract_address, seed.token_id.into());
 
-            cheat_caller_address(test_config.cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+            cheat_caller_address(
+                test_config.cultivator.contract_address, user, CheatSpan::TargetCalls(1),
+            );
             test_config.cultivator.plant(*asset, seed);
         }
 

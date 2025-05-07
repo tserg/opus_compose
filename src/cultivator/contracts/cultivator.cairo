@@ -56,6 +56,8 @@ pub mod cultivator {
         yin: IERC20Dispatcher,
         ekubo_positions: IPositionsDispatcher,
         ekubo_positions_nft: IERC721Dispatcher,
+        // Number of assets planted; used internally only.
+        // Note that this is not decremented when assets are pruned.
         assets_count: u64,
         // Mapping of assets to asset IDs
         asset_ids: Map<ContractAddress, u64>,
@@ -336,8 +338,7 @@ pub mod cultivator {
 
             ekubo_positions_clear
                 .clear(EkuboERC20Dispatcher { contract_address: yin.contract_address });
-            ekubo_positions_clear
-                .clear(EkuboERC20Dispatcher { contract_address: asset_erc20.contract_address });
+            ekubo_positions_clear.clear(EkuboERC20Dispatcher { contract_address: asset });
 
             // Create a TWAMM order for leftover yin if there is no existing TWAMM order
             let yin_balance = yin.balance_of(cultivator);
@@ -503,8 +504,8 @@ pub mod cultivator {
                     OrderClosed {
                         asset,
                         order_id: seed.token_id,
-                        fee: order_key.fee,
-                        end_time: order_key.end_time,
+                        fee: seed.pool_key.fee,
+                        end_time: order.end_time,
                     },
                 );
 

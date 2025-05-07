@@ -7,14 +7,15 @@ use opus_compose::addresses::mainnet;
 use opus_compose::cultivator::contracts::cultivator::cultivator as cultivator_contract;
 use opus_compose::cultivator::interfaces::cultivator::ICultivatorDispatcherTrait;
 use opus_compose::cultivator::tests::utils::cultivator_utils::{
-    ASSETS, BAD_GUY, CultivatorTestConfig, assert_pool_fees_collected, check_existing_order_completion,
-    create_lp_for_asset, create_lp_and_plant_assets, generate_ekubo_lp_fees, setup,
+    ASSETS, BAD_GUY, CultivatorTestConfig, assert_pool_fees_collected,
+    check_existing_order_completion, create_lp_and_plant_assets, create_lp_for_asset,
+    generate_ekubo_lp_fees, setup,
 };
 use opus_compose::cultivator::types::Order;
 use opus_compose::interfaces::erc20::IERC20DispatcherTrait;
 use snforge_std::{
-    CheatSpan, EventsFilterTrait, EventSpyAssertionsTrait, EventSpyTrait, cheat_caller_address, spy_events,
-    start_cheat_block_timestamp_global,
+    CheatSpan, EventSpyAssertionsTrait, EventSpyTrait, EventsFilterTrait, cheat_caller_address,
+    spy_events, start_cheat_block_timestamp_global,
 };
 use starknet::{ContractAddress, get_block_timestamp};
 use wadray::WAD_ONE;
@@ -241,6 +242,21 @@ fn test_prune() {
         ),
     ];
     spy.assert_emitted(@expected_events);
+
+    // Plant the seed again
+    cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+    ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(2));
+    cultivator.plant(asset, ekubo_seed);
+
+    assert_eq!(cultivator.get_assets(), array![asset].span(), "wrong assets");
+    assert!(cultivator.get_seed(asset).unwrap() == ekubo_seed, "wrong seed");
+    assert_eq!(
+        ekubo_positions_nft.owner_of(ekubo_seed.token_id.into()),
+        cultivator.contract_address,
+        "wrong owner",
+    );
 }
 
 #[test]
@@ -1016,39 +1032,37 @@ fn test_collect_multiple_assets_with_fees() {
 
     let seeds = create_lp_and_plant_assets(test_config, user, assets);
 
-    let mut expected_events: Array<(ContractAddress, cultivator_contract::Event)> = Default::default();
+    let mut expected_events: Array<(ContractAddress, cultivator_contract::Event)> =
+        Default::default();
 
     let mut spy = spy_events();
     let mut assets_copy = assets;
     for seed in seeds {
-        let before: GetPositionWithFeesResult = generate_ekubo_lp_fees(
-            test_config, *seed,
-        );
+        let before: GetPositionWithFeesResult = generate_ekubo_lp_fees(test_config, *seed);
 
         let asset = *assets_copy.pop_front().unwrap();
-        expected_events.append(
-            (
-                cultivator.contract_address,
-                cultivator_contract::Event::Collect(
-                    cultivator_contract::Collect {
-                        asset,
-                        fees: array![
-                            AssetBalance {
-                                address: *seed.pool_key.token0,
-                                amount: before.fees0,
-                            },
-                            AssetBalance {
-                                address: *seed.pool_key.token1,
-                                amount: before.fees1,
-                            },
-                        ]
-                            .span(),
-                    },
+        expected_events
+            .append(
+                (
+                    cultivator.contract_address,
+                    cultivator_contract::Event::Collect(
+                        cultivator_contract::Collect {
+                            asset,
+                            fees: array![
+                                AssetBalance {
+                                    address: *seed.pool_key.token0, amount: before.fees0,
+                                },
+                                AssetBalance {
+                                    address: *seed.pool_key.token1, amount: before.fees1,
+                                },
+                            ]
+                                .span(),
+                        },
+                    ),
                 ),
-            ),
-        );
-    }    
-    
+            );
+    }
+
     cultivator.collect();
 
     for seed in seeds {
@@ -1088,12 +1102,10 @@ fn test_extract() {
             cultivator.contract_address,
             cultivator_contract::Event::Extract(
                 cultivator_contract::Extract {
-                    caller: user,
-                    asset: yin.contract_address,
-                    amount: injection,
+                    caller: user, asset: yin.contract_address, amount: injection,
                 },
             ),
-        )
+        ),
     ];
     spy.assert_emitted(@expected_events);
 
@@ -1102,12 +1114,10 @@ fn test_extract() {
             cultivator.contract_address,
             cultivator_contract::Event::Extract(
                 cultivator_contract::Extract {
-                    caller: user,
-                    asset: yin.contract_address,
-                    amount: 0,
+                    caller: user, asset: yin.contract_address, amount: 0,
                 },
             ),
-        )
+        ),
     ];
     spy.assert_not_emitted(@should_not_emit);
 }

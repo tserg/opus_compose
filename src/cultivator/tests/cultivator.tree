@@ -1,0 +1,34 @@
+`plant`
+|--- When the caller does not have the required role
+     |--- It should revert with "Caller missing role"
+|--- When the caller is not the owner of the position NFT
+     |--- It should revert with "CUL: Not owner"
+|--- When the assets in the Seed's pool key does not match the asset and yin
+     |--- It should revert with "CUL: Pool key assets mismatch"
+|--- When there is an existing position
+     |--- It should revert with "CUL: Position exist"
+|--- When the caller has not approved the position NFT for transfer to the Cultivator contract
+     |--- It should revert with "CUL: Token not approved"
+
+`prune`
+|--- When the caller does not have the required role
+     |--- It should revert with "Caller missing role"
+|--- When there is no existing position for the asset
+     |--- It should revert with "CUL: No seed for asset"
+
+`cultivate`
+|--- If asset is provided
+     |--- When there is no existing position for the asset
+          |--- It should revert with "CUL: No seed for asset"
+|--- If asset is not provided
+     |--- If pseudo-random loop does not provide an existing position for any asset
+          |--- It should perform an early return
+|--- Accrued LP fees for the position should be collected
+|--- If there is an existing TWAP order
+     |--- Withdraw the proceeds
+     |--- If the order is completed
+          |--- Close the order
+|--- Provide liquidity to the position
+|--- If there is yin leftover above the specified threshold and there is no existing order
+     |--- Create a TWAP order using yin to purchase asset
+
