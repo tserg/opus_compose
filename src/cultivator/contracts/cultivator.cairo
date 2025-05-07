@@ -380,9 +380,12 @@ pub mod cultivator {
             self.access_control.assert_has_role(cultivator_roles::EXTRACT);
 
             let asset_erc20 = IERC20Dispatcher { contract_address: asset };
-            let caller: ContractAddress = get_caller_address();
-
             let amount: u256 = asset_erc20.balance_of(get_contract_address());
+            if amount.is_zero() {
+                return 0;
+            }
+
+            let caller: ContractAddress = get_caller_address();
             asset_erc20.transfer(caller, amount);
 
             self.emit(Extract { caller, asset, amount });
