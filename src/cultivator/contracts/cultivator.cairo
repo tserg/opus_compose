@@ -340,7 +340,7 @@ pub mod cultivator {
             let yin_balance = yin.balance_of(cultivator);
             if yin_balance > YIN_CULTIVATE_THRESHOLD.into() && can_create_new_order {
                 yin.transfer(ekubo_positions.contract_address, yin_balance);
-                let end_time: u64 = self.calculate_twamm_order_end_time(ts);
+                let end_time: u64 = ts + TWAMM_ORDER_PERIOD - ts % TWAMM_ORDER_STEP_SIZE;
                 // Reuse the LP position NFT for the TWAMM order
                 let sale_rate: u128 = ekubo_positions
                     .increase_sell_amount(
@@ -452,10 +452,6 @@ pub mod cultivator {
                             .span(),
                     },
                 );
-        }
-
-        fn calculate_twamm_order_end_time(self: @ContractState, ts: u64) -> u64 {
-            ts + TWAMM_ORDER_PERIOD - ts % TWAMM_ORDER_STEP_SIZE
         }
 
         // Checks if a TWAMM order exists and closes it if certain conditions are met.
