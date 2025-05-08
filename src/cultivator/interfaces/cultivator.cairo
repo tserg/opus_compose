@@ -1,3 +1,4 @@
+use opus::types::AssetBalance;
 use opus_compose::cultivator::types::{Order, Seed};
 use starknet::ContractAddress;
 
@@ -24,7 +25,9 @@ pub trait ICultivator<TContractState> {
 
     // Compound a LP position
     // Returns the liquidity provided
-    fn cultivate(ref self: TContractState, asset: Option<ContractAddress>) -> u128;
+    fn cultivate(
+        ref self: TContractState, asset: Option<ContractAddress>,
+    ) -> (Span<AssetBalance>, u128);
 
     // Withdraw all LP fees to the contract
     fn collect(ref self: TContractState);

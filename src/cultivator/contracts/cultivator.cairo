@@ -43,7 +43,6 @@ pub mod cultivator {
         access_control_component::AccessControl<ContractState>;
     impl AccessControlHelpers = access_control_component::AccessControlHelpers<ContractState>;
 
-
     //
     // Storage
     //
@@ -59,7 +58,7 @@ pub mod cultivator {
         // Number of assets planted; used internally only.
         // Note that this is not decremented when assets are pruned.
         assets_count: u64,
-        // Mapping of assets to asset IDs
+        // Mapping of assets to asset IDs; used internally only.
         asset_ids: Map<ContractAddress, u64>,
         // Mapping of asset IDs to Seed structs (LP details)
         // Starts from index 1
@@ -91,6 +90,7 @@ pub mod cultivator {
         #[key]
         pub asset: ContractAddress,
         pub seed: Seed,
+        pub deposited: Span<AssetBalance>,
         pub liquidity_delta: u128,
     }
 
@@ -195,6 +195,7 @@ pub mod cultivator {
 
         fn plant(ref self: ContractState, asset: ContractAddress, seed: Seed) {
             self.access_control.assert_has_role(cultivator_roles::PLANT);
+
             let caller = get_caller_address();
 
             // Assert caller is owner of position NFT
@@ -224,8 +225,7 @@ pub mod cultivator {
                 self.assets_count.write(asset_id);
                 self.asset_ids.write(asset, asset_id);
             } else {
-                let current_seed: Seed = self.seeds.read(asset_id).into();
-                assert!(current_seed == Default::default(), "CUL: Position exist");
+                assert!(self.get_seed_helper(asset_id).is_none(), "CUL: Position exist");
             }
 
             // Update storage
@@ -244,14 +244,10 @@ pub mod cultivator {
 
         fn prune(ref self: ContractState, asset: ContractAddress) {
             self.access_control.assert_has_role(cultivator_roles::PRUNE);
-            let caller = get_caller_address();
 
-            let asset_id: u64 = self.asset_ids.read(asset);
-            let seed = self.get_seed_helper(asset_id);
-            assert!(seed.is_some(), "CUL: No seed for asset");
-            let seed = seed.unwrap();
+            let (asset_id, seed) = self.get_valid_asset_id_and_seed(asset);
 
-            self.close_twamm_order(asset, asset_id, seed, true);
+            self.withdraw_proceeds_and_close_twamm_order(asset, asset_id, seed, true);
 
             // Reset current Seed to default
             let zero_seed: Seed = Default::default();
@@ -261,7 +257,7 @@ pub mod cultivator {
             self
                 .ekubo_positions_nft
                 .read()
-                .transfer_from(get_contract_address(), caller, seed.token_id.into());
+                .transfer_from(get_contract_address(), get_caller_address(), seed.token_id.into());
 
             self.emit(Prune { asset, seed });
         }
@@ -270,81 +266,88 @@ pub mod cultivator {
         // Returns 0 if:
         // - the asset is not specified and no assets were planted; or
         // - the contract's balance of yin or asset is zero after collecting LP fees.
-        fn cultivate(ref self: ContractState, asset: Option<ContractAddress>) -> u128 {
+        fn cultivate(
+            ref self: ContractState, asset: Option<ContractAddress>,
+        ) -> (Span<AssetBalance>, u128) {
             self.access_control.assert_has_role(cultivator_roles::CULTIVATE);
-
-            let ts: u64 = get_block_timestamp();
 
             let (asset_id, asset, seed) = if asset.is_some() {
                 let asset = asset.unwrap();
-                let asset_id = self.asset_ids.read(asset);
-                let seed = self.get_seed_helper(asset_id);
-                assert!(seed.is_some(), "CUL: No seed for asset");
-                (asset_id, asset, seed.unwrap())
-            } else {
-                let mut asset_id: u64 = Zero::zero();
-                let mut asset: ContractAddress = Zero::zero();
-                let mut seed: Seed = Default::default();
-                let mut divisor: u64 = self.assets_count.read().into();
-                while divisor != 0 {
-                    // Index starts from 1
-                    let id: u64 = (ts % divisor) + 1;
-
-                    if let Some(current_seed) = self.get_seed_helper(id) {
-                        asset_id = id;
-                        asset = self.get_asset_from_seed(current_seed);
-                        seed = current_seed;
-                        break;
-                    }
-
-                    divisor -= 1;
-                }
-
+                let (asset_id, seed) = self.get_valid_asset_id_and_seed(asset);
                 (asset_id, asset, seed)
+            } else {
+                self.pick_asset_to_cultivate()
             };
 
+            let mut deposited: Span<AssetBalance> = array![].span();
+            let mut liquidity_delta: u128 = Zero::zero();
+
             if asset.is_zero() {
-                return 0;
+                return (deposited, liquidity_delta);
             }
 
             let cultivator = get_contract_address();
             let yin = self.yin.read();
-            let asset_erc20 = IERC20Dispatcher { contract_address: asset };
-            let ekubo_positions = self.ekubo_positions.read();
 
             // Collect accrued LP fees
             self.collect_fees_helper(seed);
 
-            // Withdraw any existing TWAMM orders
-            let can_create_new_order: bool = self.close_twamm_order(asset, asset_id, seed, false);
+            // Withdraw proceeds if there is an existing TWAMM order
+            let can_create_new_order: bool = self
+                .withdraw_proceeds_and_close_twamm_order(asset, asset_id, seed, false);
 
-            // Provide liquidity
-            let yin_balance = yin.balance_of(cultivator);
-            let asset_balance = asset_erc20.balance_of(cultivator);
-            if yin_balance.is_zero() || asset_balance.is_zero() {
-                return 0;
+            // Early return if there is no yin because we can neither provide liquidity
+            // or create a TWAMM order
+            let mut yin_balance = yin.balance_of(cultivator);
+            if yin_balance.is_zero() {
+                return (deposited, liquidity_delta);
             }
 
-            yin.transfer(ekubo_positions.contract_address, yin.balance_of(cultivator));
-            asset_erc20
-                .transfer(ekubo_positions.contract_address, asset_erc20.balance_of(cultivator));
+            let ekubo_positions = self.ekubo_positions.read();
 
-            let liquidity_delta: u128 = ekubo_positions
-                .deposit(seed.token_id, seed.pool_key, seed.bounds, 1);
+            // Auto-compound LP position if there is some asset and yin
+            let asset_erc20 = IERC20Dispatcher { contract_address: asset };
+            let asset_balance = asset_erc20.balance_of(cultivator);
+            if asset_balance.is_non_zero() {
+                yin.transfer(ekubo_positions.contract_address, yin_balance);
+                asset_erc20.transfer(ekubo_positions.contract_address, asset_balance);
 
-            let ekubo_positions_clear = IClearDispatcher {
-                contract_address: ekubo_positions.contract_address,
-            };
+                liquidity_delta = ekubo_positions
+                    .deposit(seed.token_id, seed.pool_key, seed.bounds, 1);
 
-            ekubo_positions_clear
-                .clear(EkuboERC20Dispatcher { contract_address: yin.contract_address });
-            ekubo_positions_clear.clear(EkuboERC20Dispatcher { contract_address: asset });
+                let ekubo_positions_clear = IClearDispatcher {
+                    contract_address: ekubo_positions.contract_address,
+                };
+                let refunded_yin: u256 = ekubo_positions_clear
+                    .clear(EkuboERC20Dispatcher { contract_address: yin.contract_address });
+                let refunded_asset: u256 = ekubo_positions_clear
+                    .clear(EkuboERC20Dispatcher { contract_address: asset });
 
-            // Create a TWAMM order for leftover yin if there is no existing TWAMM order
-            let yin_balance = yin.balance_of(cultivator);
+                deposited =
+                    array![
+                        AssetBalance {
+                            address: yin.contract_address,
+                            amount: (yin_balance - refunded_yin).try_into().unwrap(),
+                        },
+                        AssetBalance {
+                            address: asset,
+                            amount: (asset_balance - refunded_asset).try_into().unwrap(),
+                        },
+                    ]
+                    .span();
+                self.emit(Cultivate { asset, seed, deposited, liquidity_delta });
+
+                yin_balance = refunded_yin;
+            }
+
+            // Create a TWAMM order for yin remaining in the contract if there is no existing TWAMM
+            // order
             if yin_balance > YIN_CULTIVATE_THRESHOLD.into() && can_create_new_order {
                 yin.transfer(ekubo_positions.contract_address, yin_balance);
+
+                let ts: u64 = get_block_timestamp();
                 let end_time: u64 = ts + TWAMM_ORDER_PERIOD - ts % TWAMM_ORDER_STEP_SIZE;
+
                 // Reuse the LP position NFT for the TWAMM order
                 let sale_rate: u128 = ekubo_positions
                     .increase_sell_amount(
@@ -363,9 +366,7 @@ pub mod cultivator {
                     );
             }
 
-            self.emit(Cultivate { asset, seed, liquidity_delta });
-
-            liquidity_delta
+            (deposited, liquidity_delta)
         }
 
         // Withdraw all LP fees to this contract
@@ -403,10 +404,9 @@ pub mod cultivator {
     impl CultivatorHelpers of CultivatorHelpersTrait {
         fn get_order_helper(self: @ContractState, asset_id: u64) -> Option<Order> {
             let order: Order = self.orders.read(asset_id);
-            if order == Default::default() {
-                Option::None
-            } else {
-                Option::Some(order)
+            match order.end_time {
+                0 => Option::None,
+                _ => Option::Some(order),
             }
         }
 
@@ -425,6 +425,33 @@ pub mod cultivator {
             } else {
                 seed.pool_key.token0
             }
+        }
+
+        fn get_valid_asset_id_and_seed(
+            self: @ContractState, asset: ContractAddress,
+        ) -> (u64, Seed) {
+            let asset_id = self.asset_ids.read(asset);
+            let seed = self.get_seed_helper(asset_id);
+            assert!(seed.is_some(), "CUL: No seed for asset");
+            (asset_id, seed.unwrap())
+        }
+
+        fn pick_asset_to_cultivate(self: @ContractState) -> (u64, ContractAddress, Seed) {
+            let ts: u64 = get_block_timestamp();
+
+            let mut divisor: u64 = self.assets_count.read().into();
+            while divisor != 0 {
+                // Asset ID starts from 1
+                let id: u64 = (ts % divisor) + 1;
+
+                if let Some(seed) = self.get_seed_helper(id) {
+                    return (id, self.get_asset_from_seed(seed), seed);
+                }
+
+                divisor -= 1;
+            }
+
+            (Zero::zero(), Zero::zero(), Default::default())
         }
 
         fn construct_twamm_order_key(
@@ -462,9 +489,10 @@ pub mod cultivator {
                 );
         }
 
+        // Withdraws proceeds from an existing TWAMM order.
         // Checks if a TWAMM order exists and closes it if certain conditions are met.
         // Returns a boolean of whether the TWAMM order for the asset was closed.
-        fn close_twamm_order(
+        fn withdraw_proceeds_and_close_twamm_order(
             ref self: ContractState,
             asset: ContractAddress,
             asset_id: u64,
