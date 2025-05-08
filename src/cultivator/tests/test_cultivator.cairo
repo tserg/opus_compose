@@ -306,7 +306,9 @@ fn test_cultivate_no_asset() {
     let user = mainnet::MULTISIG;
 
     cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-    assert!(cultivator.cultivate(Option::None).is_zero(), "should be zero liquidity delta");
+    let (deposited, liquidity_delta) = cultivator.cultivate(Option::None);
+    assert!(liquidity_delta.is_zero(), "should be zero liquidity delta");
+    assert!(deposited == array![].span(), "should be zero deposited");
 }
 
 #[test]
@@ -316,7 +318,7 @@ fn test_cultivate_single_asset_without_existing_twamm_order() {
     let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
-    let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
+    let excess_yin: u128 = cultivator_contract::MINIMUM_YIN_TO_CREATE_ORDER * 2;
 
     let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
@@ -340,7 +342,7 @@ fn test_cultivate_single_asset_without_existing_twamm_order() {
             }
 
             cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-            let liquidity_delta: u128 = if *specify_asset {
+            let (deposited, liquidity_delta) = if *specify_asset {
                 cultivator.cultivate(Option::Some(asset))
             } else {
                 cultivator.cultivate(Option::None)
@@ -352,8 +354,10 @@ fn test_cultivate_single_asset_without_existing_twamm_order() {
             let mut expected_events = array![
                 (
                     cultivator.contract_address,
-                    cultivator_contract::Event::Cultivate(
-                        cultivator_contract::Cultivate { asset, seed: ekubo_seed, liquidity_delta },
+                    cultivator_contract::Event::Supply(
+                        cultivator_contract::Supply {
+                            asset, seed: ekubo_seed, deposited, liquidity_delta,
+                        },
                     ),
                 ),
                 (
@@ -459,7 +463,7 @@ fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
     let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
-    let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 3;
+    let excess_yin: u128 = cultivator_contract::MINIMUM_YIN_TO_CREATE_ORDER * 3;
 
     let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
@@ -482,7 +486,7 @@ fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
             yin.transfer(cultivator.contract_address, excess_yin.into());
 
             cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-            let first_liquidity_delta: u128 = if *specify_asset {
+            let (first_deposited, first_liquidity_delta) = if *specify_asset {
                 cultivator.cultivate(Option::Some(asset))
             } else {
                 cultivator.cultivate(Option::None)
@@ -506,7 +510,7 @@ fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
             }
 
             cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-            let second_liquidity_delta: u128 = if *specify_asset {
+            let (second_deposited, second_liquidity_delta) = if *specify_asset {
                 cultivator.cultivate(Option::Some(asset))
             } else {
                 cultivator.cultivate(Option::None)
@@ -538,17 +542,23 @@ fn test_cultivate_single_asset_with_existing_incomplete_twamm_order() {
             let mut expected_events = array![
                 (
                     cultivator.contract_address,
-                    cultivator_contract::Event::Cultivate(
-                        cultivator_contract::Cultivate {
-                            asset, seed: ekubo_seed, liquidity_delta: first_liquidity_delta,
+                    cultivator_contract::Event::Supply(
+                        cultivator_contract::Supply {
+                            asset,
+                            seed: ekubo_seed,
+                            deposited: first_deposited,
+                            liquidity_delta: first_liquidity_delta,
                         },
                     ),
                 ),
                 (
                     cultivator.contract_address,
-                    cultivator_contract::Event::Cultivate(
-                        cultivator_contract::Cultivate {
-                            asset, seed: ekubo_seed, liquidity_delta: second_liquidity_delta,
+                    cultivator_contract::Event::Supply(
+                        cultivator_contract::Supply {
+                            asset,
+                            seed: ekubo_seed,
+                            deposited: second_deposited,
+                            liquidity_delta: second_liquidity_delta,
                         },
                     ),
                 ),
@@ -645,7 +655,7 @@ fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
 
     let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
 
-    let mut first_excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 3;
+    let mut first_excess_yin: u128 = cultivator_contract::MINIMUM_YIN_TO_CREATE_ORDER * 3;
 
     for specify_asset in BOOL_PARAMETRIZED.span() {
         for create_second_order in BOOL_PARAMETRIZED.span() {
@@ -666,7 +676,7 @@ fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
             yin.transfer(cultivator.contract_address, first_excess_yin.into());
 
             cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-            let first_liquidity_delta: u128 = if *specify_asset {
+            let (first_deposited, first_liquidity_delta) = if *specify_asset {
                 cultivator.cultivate(Option::Some(asset))
             } else {
                 cultivator.cultivate(Option::None)
@@ -695,7 +705,7 @@ fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
             }
 
             cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-            let second_liquidity_delta: u128 = if *specify_asset {
+            let (second_deposited, second_liquidity_delta) = if *specify_asset {
                 cultivator.cultivate(Option::Some(asset))
             } else {
                 cultivator.cultivate(Option::None)
@@ -707,17 +717,23 @@ fn test_cultivate_single_asset_with_existing_completed_twamm_order() {
             let mut expected_events = array![
                 (
                     cultivator.contract_address,
-                    cultivator_contract::Event::Cultivate(
-                        cultivator_contract::Cultivate {
-                            asset, seed: ekubo_seed, liquidity_delta: first_liquidity_delta,
+                    cultivator_contract::Event::Supply(
+                        cultivator_contract::Supply {
+                            asset,
+                            seed: ekubo_seed,
+                            deposited: first_deposited,
+                            liquidity_delta: first_liquidity_delta,
                         },
                     ),
                 ),
                 (
                     cultivator.contract_address,
-                    cultivator_contract::Event::Cultivate(
-                        cultivator_contract::Cultivate {
-                            asset, seed: ekubo_seed, liquidity_delta: second_liquidity_delta,
+                    cultivator_contract::Event::Supply(
+                        cultivator_contract::Supply {
+                            asset,
+                            seed: ekubo_seed,
+                            deposited: second_deposited,
+                            liquidity_delta: second_liquidity_delta,
                         },
                     ),
                 ),
@@ -877,7 +893,7 @@ fn test_cultivate_multiple_asset() {
     // Expected modulo order: 2, 0, 1
     // Expected asset ids: 3, 1, 2
 
-    let excess_yin: u128 = cultivator_contract::YIN_CULTIVATE_THRESHOLD * 2;
+    let excess_yin: u128 = cultivator_contract::MINIMUM_YIN_TO_CREATE_ORDER * 2;
 
     let mut expected_asset_ids: Span<usize> = array![3, 1, 2].span();
     let ts: u64 = get_block_timestamp();
@@ -901,7 +917,7 @@ fn test_cultivate_multiple_asset() {
         yin.transfer(cultivator.contract_address, excess_yin.into());
 
         cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
-        let liquidity_delta: u128 = cultivator.cultivate(Option::None);
+        let (deposited, liquidity_delta) = cultivator.cultivate(Option::None);
 
         assert!(liquidity_delta.is_non_zero(), "no liquidity added");
 
@@ -914,8 +930,8 @@ fn test_cultivate_multiple_asset() {
         let mut expected_events = array![
             (
                 cultivator.contract_address,
-                cultivator_contract::Event::Cultivate(
-                    cultivator_contract::Cultivate { asset, seed, liquidity_delta },
+                cultivator_contract::Event::Supply(
+                    cultivator_contract::Supply { asset, seed, deposited, liquidity_delta },
                 ),
             ),
             (
@@ -953,6 +969,83 @@ fn test_cultivate_multiple_asset() {
         spy.assert_emitted(@expected_events);
     }
 }
+
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+fn test_cultivate_no_yin_early_return() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
+
+    cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+    ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    cultivator.plant(asset, ekubo_seed);
+
+    let mut spy = spy_events();
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    let (deposited, liquidity_delta) = cultivator.cultivate(Option::Some(asset));
+    assert!(liquidity_delta.is_zero(), "liquidity added");
+    assert!(deposited == array![].span(), "deposited into lp");
+
+    let cultivator_events = spy.get_events().emitted_by(cultivator.contract_address);
+    assert!(cultivator_events.events.len() == 0, "event emitted");
+}
+
+// Test cultivate with yin without asset creates twamm order
+#[test]
+#[fork("MAINNET_CULTIVATOR")]
+fn test_cultivate_single_asset_yin_only() {
+    let test_config = setup(Option::None);
+    let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
+    let user = mainnet::MULTISIG;
+    let asset = mainnet::EKUBO;
+    let excess_yin: u128 = cultivator_contract::MINIMUM_YIN_TO_CREATE_ORDER * 2;
+
+    let (ekubo_seed, _) = create_lp_for_asset(test_config, user, asset);
+
+    cheat_caller_address(mainnet::EKUBO_POSITIONS_NFT, user, CheatSpan::TargetCalls(1));
+    ekubo_positions_nft.approve(cultivator.contract_address, ekubo_seed.token_id.into());
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    cultivator.plant(asset, ekubo_seed);
+
+    cheat_caller_address(mainnet::SHRINE, user, CheatSpan::TargetCalls(1));
+    yin.transfer(cultivator.contract_address, excess_yin.into());
+
+    let mut spy = spy_events();
+
+    cheat_caller_address(cultivator.contract_address, user, CheatSpan::TargetCalls(1));
+    let (deposited, liquidity_delta) = cultivator.cultivate(Option::Some(asset));
+
+    assert!(liquidity_delta.is_zero(), "liquidity added");
+    assert!(deposited == array![].span(), "deposited into lp");
+
+    let order: Option<Order> = cultivator.get_order(asset);
+    assert!(order.is_some(), "order not created");
+    let order: Order = order.unwrap();
+
+    let mut expected_events = array![
+        (
+            cultivator.contract_address,
+            cultivator_contract::Event::OrderPlaced(
+                cultivator_contract::OrderPlaced {
+                    asset,
+                    order_id: ekubo_seed.token_id,
+                    fee: ekubo_seed.pool_key.fee,
+                    end_time: order.end_time,
+                },
+            ),
+        ),
+    ];
+    spy.assert_emitted(@expected_events);
+}
+
 
 #[test]
 #[fork("MAINNET_CULTIVATOR")]
