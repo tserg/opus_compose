@@ -26,7 +26,7 @@ pub mod cultivator {
     // Constants
     ///
 
-    const LOOP_START: u64 = 1;
+    const LOOP_START: u16 = 1;
 
     pub const TWAMM_ORDER_STEP_SIZE: u64 = 65536;
     pub const TWAMM_ORDER_PERIOD: u64 = 131072; // ~18 to 36 hours
@@ -58,15 +58,15 @@ pub mod cultivator {
         // Cumulative number of assets planted; used internally only.
         // Note that this is not decremented when assets are pruned.
         // Starts from index 1
-        max_asset_id: u64,
+        max_asset_id: u16,
         // Mapping of assets to asset IDs; used internally only.
-        asset_ids: Map<ContractAddress, u64>,
+        asset_ids: Map<ContractAddress, u16>,
         // Mapping of asset IDs to Seed structs (LP details)
         // Starts from index 1
-        seeds: Map<u64, StorageSeed>,
+        seeds: Map<u16, StorageSeed>,
         // Mapping of asset IDs to TWAMM Order structs
         // Starts from index 1
-        orders: Map<u64, Order>,
+        orders: Map<u16, Order>,
     }
 
     //
@@ -170,8 +170,8 @@ pub mod cultivator {
     impl ICultivatorImpl of ICultivator<ContractState> {
         // Returns a list of assets with active positions
         fn get_assets(self: @ContractState) -> Span<ContractAddress> {
-            let mut idx: u64 = LOOP_START;
-            let loop_end: u64 = self.max_asset_id.read() + LOOP_START;
+            let mut idx: u16 = LOOP_START;
+            let loop_end: u16 = self.max_asset_id.read() + LOOP_START;
             let mut assets: Array<ContractAddress> = Default::default();
             while idx != loop_end {
                 if let Some(seed) = self.get_seed_helper(idx) {
@@ -220,7 +220,7 @@ pub mod cultivator {
 
             // If asset has not been added, update the count of assets.
             // Otherwise, if asset has been added, assert no existing position for asset.
-            let mut asset_id: u64 = self.asset_ids.read(asset);
+            let mut asset_id: u16 = self.asset_ids.read(asset);
             if asset_id == 0 {
                 asset_id = self.max_asset_id.read() + 1;
                 self.max_asset_id.write(asset_id);
@@ -278,10 +278,8 @@ pub mod cultivator {
         ) -> (Span<AssetBalance>, u128) {
             self.access_control.assert_has_role(cultivator_roles::CULTIVATE);
 
-            let (asset_id, asset, seed) = if asset.is_some() {
-                let asset = asset.unwrap();
-                let (asset_id, seed) = self.get_valid_asset_id_and_seed(asset);
-                (asset_id, asset, seed)
+            let asset = if asset.is_some() {
+                asset.unwrap()
             } else {
                 self.pick_asset_to_cultivate()
             };
@@ -292,6 +290,8 @@ pub mod cultivator {
             if asset.is_zero() {
                 return (deposited, liquidity_delta);
             }
+
+            let (asset_id, seed) = self.get_valid_asset_id_and_seed(asset);
 
             let cultivator = get_contract_address();
             let yin = self.yin.read();
@@ -378,8 +378,8 @@ pub mod cultivator {
 
         // Withdraw all LP fees to this contract
         fn collect(ref self: ContractState) {
-            let mut idx: u64 = LOOP_START;
-            let loop_end: u64 = self.max_asset_id.read() + LOOP_START;
+            let mut idx: u16 = LOOP_START;
+            let loop_end: u16 = self.max_asset_id.read() + LOOP_START;
             while idx != loop_end {
                 if let Some(seed) = self.get_seed_helper(idx) {
                     self.collect_fees_helper(seed);
@@ -409,7 +409,7 @@ pub mod cultivator {
 
     #[generate_trait]
     impl CultivatorHelpers of CultivatorHelpersTrait {
-        fn get_order_helper(self: @ContractState, asset_id: u64) -> Option<Order> {
+        fn get_order_helper(self: @ContractState, asset_id: u16) -> Option<Order> {
             let order: Order = self.orders.read(asset_id);
             match order.end_time {
                 0 => Option::None,
@@ -417,7 +417,7 @@ pub mod cultivator {
             }
         }
 
-        fn get_seed_helper(self: @ContractState, asset_id: u64) -> Option<Seed> {
+        fn get_seed_helper(self: @ContractState, asset_id: u16) -> Option<Seed> {
             let seed: Seed = self.seeds.read(asset_id).into();
             match seed.token_id {
                 0 => Option::None,
@@ -436,29 +436,21 @@ pub mod cultivator {
 
         fn get_valid_asset_id_and_seed(
             self: @ContractState, asset: ContractAddress,
-        ) -> (u64, Seed) {
+        ) -> (u16, Seed) {
             let asset_id = self.asset_ids.read(asset);
             let seed = self.get_seed_helper(asset_id);
             assert!(seed.is_some(), "CUL: No seed for asset");
             (asset_id, seed.unwrap())
         }
 
-        fn pick_asset_to_cultivate(self: @ContractState) -> (u64, ContractAddress, Seed) {
-            let ts: u64 = get_block_timestamp();
-
-            let mut divisor: u64 = self.max_asset_id.read().into();
-            while divisor != 0 {
-                // Asset ID starts from 1
-                let id: u64 = (ts % divisor) + 1;
-
-                if let Some(seed) = self.get_seed_helper(id) {
-                    return (id, self.get_asset_from_seed(seed), seed);
-                }
-
-                divisor -= 1;
+        fn pick_asset_to_cultivate(self: @ContractState) -> ContractAddress {
+            let active_assets: Span<ContractAddress> = self.get_assets();
+            if active_assets.len().is_zero() {
+                return Zero::zero();
             }
 
-            (Zero::zero(), Zero::zero(), Default::default())
+            let id: u64 = get_block_timestamp() % self.max_asset_id.read().into();
+            *active_assets[id.try_into().unwrap()]
         }
 
         fn construct_twamm_order_key(
@@ -502,7 +494,7 @@ pub mod cultivator {
         fn withdraw_proceeds_and_close_twamm_order(
             ref self: ContractState,
             asset: ContractAddress,
-            asset_id: u64,
+            asset_id: u16,
             seed: Seed,
             force_closure: bool,
         ) -> bool {
