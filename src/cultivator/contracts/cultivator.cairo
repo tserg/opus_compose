@@ -30,7 +30,7 @@ pub mod cultivator {
 
     pub const TWAMM_ORDER_STEP_SIZE: u64 = 65536;
     pub const TWAMM_ORDER_PERIOD: u64 = 131072; // ~18 to 36 hours
-    pub const YIN_CULTIVATE_THRESHOLD: u128 = 10 * WAD_ONE;
+    pub const MINIMUM_YIN_TO_CREATE_ORDER: u128 = 10 * WAD_ONE;
 
     //
     // Components
@@ -77,21 +77,12 @@ pub mod cultivator {
     pub enum Event {
         AccessControlEvent: access_control_component::Event,
         Collect: Collect,
-        Cultivate: Cultivate,
         Extract: Extract,
         OrderPlaced: OrderPlaced,
         OrderClosed: OrderClosed,
         Plant: Plant,
         Prune: Prune,
-    }
-
-    #[derive(Copy, Drop, starknet::Event, PartialEq)]
-    pub struct Cultivate {
-        #[key]
-        pub asset: ContractAddress,
-        pub seed: Seed,
-        pub deposited: Span<AssetBalance>,
-        pub liquidity_delta: u128,
+        Supply: Supply,
     }
 
     #[derive(Copy, Drop, starknet::Event, PartialEq)]
@@ -140,6 +131,15 @@ pub mod cultivator {
         #[key]
         pub asset: ContractAddress,
         pub seed: Seed,
+    }
+
+    #[derive(Copy, Drop, starknet::Event, PartialEq)]
+    pub struct Supply {
+        #[key]
+        pub asset: ContractAddress,
+        pub seed: Seed,
+        pub deposited: Span<AssetBalance>,
+        pub liquidity_delta: u128,
     }
 
     //
@@ -262,10 +262,16 @@ pub mod cultivator {
             self.emit(Prune { asset, seed });
         }
 
-        // Returns the liquidity added to the LP.
-        // Returns 0 if:
+        // Grows a LP position by performing three distinct actions:
+        // 1. Collect accrued fees from the LP position
+        // 2. Adding liquidity to the LP position
+        // 3. Creating a TWAMM order for excess yin
+        // Returns a tuple of:
+        // - An array of assets added as liquidity to the LP
+        // - Liquidity added to the LP
+        // An empty array and zero value is returned if:
         // - the asset is not specified and no assets were planted; or
-        // - the contract's balance of yin or asset is zero after collecting LP fees.
+        // - the contract's yin balance is zero after collecting LP fees.
         fn cultivate(
             ref self: ContractState, asset: Option<ContractAddress>,
         ) -> (Span<AssetBalance>, u128) {
@@ -335,14 +341,14 @@ pub mod cultivator {
                         },
                     ]
                     .span();
-                self.emit(Cultivate { asset, seed, deposited, liquidity_delta });
+                self.emit(Supply { asset, seed, deposited, liquidity_delta });
 
                 yin_balance = refunded_yin;
             }
 
             // Create a TWAMM order for yin remaining in the contract if there is no existing TWAMM
             // order
-            if yin_balance > YIN_CULTIVATE_THRESHOLD.into() && can_create_new_order {
+            if yin_balance > MINIMUM_YIN_TO_CREATE_ORDER.into() && can_create_new_order {
                 yin.transfer(ekubo_positions.contract_address, yin_balance);
 
                 let ts: u64 = get_block_timestamp();
