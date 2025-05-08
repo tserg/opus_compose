@@ -974,7 +974,7 @@ fn test_cultivate_multiple_asset() {
 #[fork("MAINNET_CULTIVATOR")]
 fn test_cultivate_no_yin_early_return() {
     let test_config = setup(Option::None);
-    let CultivatorTestConfig { cultivator, yin, ekubo_positions_nft, .. } = test_config;
+    let CultivatorTestConfig { cultivator, ekubo_positions_nft, .. } = test_config;
     let user = mainnet::MULTISIG;
     let asset = mainnet::EKUBO;
 
