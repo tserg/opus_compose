@@ -55,9 +55,10 @@ pub mod cultivator {
         yin: IERC20Dispatcher,
         ekubo_positions: IPositionsDispatcher,
         ekubo_positions_nft: IERC721Dispatcher,
-        // Number of assets planted; used internally only.
+        // Cumulative number of assets planted; used internally only.
         // Note that this is not decremented when assets are pruned.
-        assets_count: u64,
+        // Starts from index 1
+        max_asset_id: u64,
         // Mapping of assets to asset IDs; used internally only.
         asset_ids: Map<ContractAddress, u64>,
         // Mapping of asset IDs to Seed structs (LP details)
@@ -170,7 +171,7 @@ pub mod cultivator {
         // Returns a list of assets with active positions
         fn get_assets(self: @ContractState) -> Span<ContractAddress> {
             let mut idx: u64 = LOOP_START;
-            let loop_end: u64 = self.assets_count.read() + LOOP_START;
+            let loop_end: u64 = self.max_asset_id.read() + LOOP_START;
             let mut assets: Array<ContractAddress> = Default::default();
             while idx != loop_end {
                 if let Some(seed) = self.get_seed_helper(idx) {
@@ -221,8 +222,8 @@ pub mod cultivator {
             // Otherwise, if asset has been added, assert no existing position for asset.
             let mut asset_id: u64 = self.asset_ids.read(asset);
             if asset_id == 0 {
-                asset_id = self.assets_count.read() + 1;
-                self.assets_count.write(asset_id);
+                asset_id = self.max_asset_id.read() + 1;
+                self.max_asset_id.write(asset_id);
                 self.asset_ids.write(asset, asset_id);
             } else {
                 assert!(self.get_seed_helper(asset_id).is_none(), "CUL: Position exist");
@@ -378,7 +379,7 @@ pub mod cultivator {
         // Withdraw all LP fees to this contract
         fn collect(ref self: ContractState) {
             let mut idx: u64 = LOOP_START;
-            let loop_end: u64 = self.assets_count.read() + LOOP_START;
+            let loop_end: u64 = self.max_asset_id.read() + LOOP_START;
             while idx != loop_end {
                 if let Some(seed) = self.get_seed_helper(idx) {
                     self.collect_fees_helper(seed);
@@ -445,7 +446,7 @@ pub mod cultivator {
         fn pick_asset_to_cultivate(self: @ContractState) -> (u64, ContractAddress, Seed) {
             let ts: u64 = get_block_timestamp();
 
-            let mut divisor: u64 = self.assets_count.read().into();
+            let mut divisor: u64 = self.max_asset_id.read().into();
             while divisor != 0 {
                 // Asset ID starts from 1
                 let id: u64 = (ts % divisor) + 1;
