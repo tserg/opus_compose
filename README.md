@@ -25,7 +25,7 @@ scarb test
 | Module | Address | Version |
 | ------ | --------|---------|
 | Archabbot | 0x073049e229f9302cf740be2f491447a1b728da2fe96e571a3a79c64224e121d5 | `main` |
-| Rite - Topup | 0x0532327b1eb6e21c62cc7a5952a3573f3c50d9278ed66e108602618510bcee7d | `main` |
+| Rite - Topup | 0x07f263bc11790faa559c9af446dbb13f84f82ac1ba1f0a9fe6d7b884ff7e538e | `main` |
 | Stabilizer [CASH-USDC.e] | `0x03dbe818c99cf6658f23ef70656d64cce650fdb97105b96876d7e421fa25a528` | `v1.0.0` |
 | Stabilizer [CASH-USDC] | `0x0688065247d31828d0daf6336284489624930ab21a59c3d2f07fbe58651b1f34` | `v1.0.0` |
 | Stabilizer Frontend Data Provider | `0x02618ba4d6821521fe2501ad1795b24ef896e108a5d54fdaa9e5f24dc78b81b2` | `main` |
