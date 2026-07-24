@@ -7,13 +7,10 @@ use wadray::{Ray, Wad};
 
 const TWO_POW_128: u256 = 0x100000000000000000000000000000000;
 
-// Exact input swap is always used so the `TokenAmount`
-// for the swap can be constructed from `forge_amount`
-// at the call site
-#[derive(Copy, Drop, Serde)]
-pub struct SwapParams {
+#[derive(Drop, Serde)]
+pub struct MultiHopSwapParams {
     pub forge_amount: Wad,
-    pub route_node: Option<RouteNode>,
+    pub route: Array<RouteNode>,
 }
 
 // Packs min_asset_balance and slippage into a felt252.

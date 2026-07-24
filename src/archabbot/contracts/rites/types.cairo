@@ -27,9 +27,9 @@ pub struct PackedEkuboPoolParams {
 #[generate_trait]
 pub impl EkuboPoolParamsImpl of EkuboPoolParamsTrait {
     fn into_pool_key(
-        self: EkuboPoolParams, asset: ContractAddress, cash: ContractAddress,
+        self: EkuboPoolParams, first_token: ContractAddress, second_token: ContractAddress,
     ) -> PoolKey {
-        let (token0, token1) = minmax(asset, cash);
+        let (token0, token1) = minmax(first_token, second_token);
         PoolKey {
             token0,
             token1,

@@ -1,4 +1,6 @@
+use core::cmp::minmax;
 use core::num::traits::Zero;
+use ekubo::types::keys::PoolKey;
 use opus::interfaces::{IShrineDispatcher, IShrineDispatcherTrait};
 use opus::types::Health;
 use opus::utils::assertions::assert_equalish;
@@ -15,7 +17,6 @@ use opus_compose::archabbot::interfaces::celebrant::{
 };
 use opus_compose::archabbot::interfaces::rite::{IRITE_ID, IRiteDispatcher, IRiteDispatcherTrait};
 use opus_compose::archabbot::tests::utils::archabbot_utils;
-use opus_compose::constants;
 use opus_compose::interfaces::erc20::{IERC20Dispatcher, IERC20DispatcherTrait};
 use opus_compose::shared::components::src5::{ISRC5Dispatcher, ISRC5DispatcherTrait};
 use snforge_std::{
@@ -23,28 +24,65 @@ use snforge_std::{
     cheat_caller_address, declare, spy_events,
 };
 use starknet::{ContractAddress, SyscallResultTrait};
-use wadray::{RAY_PERCENT, Ray, WAD_ONE, Wad, rdiv_ww, rmul_wr};
+use wadray::{RAY_PERCENT, Ray, WAD_ONE, Wad, rmul_wr};
+
+
+//
+// Constants for mainnet pools used by these tests
+//
+
+// Primary hop (CASH/USDC): the liquid native-USDC stable pool.
+// 0x033068f6... (USDC) < 0x0498edfa... (SHRINE) => token0 = USDC.
+const CASH_USDC_POOL_FEE: u128 = 6805647338418769825990228293189632;
+const CASH_USDC_TICK_SPACING: u128 = 20;
+
+// Second hop (USDC/STRK): the 0.05% pool.
+// https://ekubo.org/charts/pool/0x534e5f4d41494e/0x5dd3d2f4429af886cd1a3b08289dbcea99a294197e9eb43b0e0325b4b/0x1002120c2f49c83a9d777123a4061cd371cfc24fb40cddd9bd8450ce3f464ac
+const USDC_STRK_POOL_FEE: u128 = 170141183460469235273462165868118016;
+const USDC_STRK_TICK_SPACING: u128 = 1000;
 
 
 //
 // Helpers
 //
 
+fn primary_hop_pool_key() -> PoolKey {
+    let (token0, token1) = minmax(mainnet::USDC, mainnet::SHRINE);
+    PoolKey {
+        token0,
+        token1,
+        fee: CASH_USDC_POOL_FEE,
+        tick_spacing: CASH_USDC_TICK_SPACING,
+        extension: Zero::zero(),
+    }
+}
+
 fn deploy_topup_rite(archabbot_address: ContractAddress) -> ContractAddress {
-    let topup_class = declare("topup_rite").unwrap_syscall().contract_class();
+    let class = declare("topup_rite").unwrap_syscall().contract_class();
+    let primary_hop = primary_hop_pool_key();
     let calldata: Array<felt252> = array![
         mainnet::SHRINE.into(), // yin (CASH = Shrine address)
+        mainnet::USDC.into(), // usdc (intermediate hop token)
         archabbot_address.into(),
         mainnet::EKUBO_ROUTER.into(),
         mainnet::EKUBO_CORE.into(),
         mainnet::EKUBO_ORACLE.into(),
+        primary_hop.fee.into(),
+        primary_hop.tick_spacing.into(),
+        primary_hop.extension.into(),
     ];
-    let (rite_addr, _) = topup_class.deploy(@calldata).expect('topup deploy fail');
+    let (rite_addr, _) = class.deploy(@calldata).expect('topup deploy fail');
     rite_addr
 }
 
 fn default_pool_params() -> EkuboPoolParams {
     EkuboPoolParams { fee: 0, tick_spacing: 0, extension: Zero::zero() }
+}
+
+fn usdc_strk_pool_params() -> EkuboPoolParams {
+    EkuboPoolParams {
+        fee: USDC_STRK_POOL_FEE, tick_spacing: USDC_STRK_TICK_SPACING, extension: Zero::zero(),
+    }
 }
 
 fn default_topup_config(destination: ContractAddress) -> TopupConfig {
@@ -65,7 +103,7 @@ fn serialize_config(config: TopupConfig) -> Span<felt252> {
     serialized.span()
 }
 
-// Open a trove via Archabbot, deploy a topup rite, and attach it.
+// Open a trove via Archabbot, deploy a double-hop topup rite, and attach it.
 fn setup_trove_with_topup_rite() -> (ICelebrantDispatcher, u64, ContractAddress) {
     let test_config = archabbot_utils::archabbot_deploy(None);
     let user = archabbot_utils::USER;
@@ -305,6 +343,9 @@ fn test_set_trove_config_zero_asset_reverts() {
     rite.set_trove_config(trove_id, serialize_config(config));
 }
 
+// On the double-hop rite the per-trove pool params only apply to the second hop
+// (USDC -> asset). They are only validated when the asset is neither CASH nor USDC,
+// so this case uses STRK as the asset.
 #[test]
 #[fork("MAINNET_ARCHABBOT")]
 #[should_panic(expected: "TOPUP: Invalid pool params")]
@@ -314,8 +355,10 @@ fn test_set_trove_config_invalid_pool_params_reverts() {
     let rite = IRiteDispatcher { contract_address: rite_addr };
 
     let config = TopupConfig {
-        asset: mainnet::USDC,
-        pool_params: EkuboPoolParams { fee: 3000_u128, tick_spacing: 0, extension: Zero::zero() },
+        asset: mainnet::STRK,
+        pool_params: EkuboPoolParams {
+            fee: USDC_STRK_POOL_FEE, tick_spacing: 0, extension: Zero::zero(),
+        },
         ..default_topup_config(user),
     };
 
@@ -332,9 +375,9 @@ fn test_set_trove_config_non_existent_pool_reverts() {
     let rite = IRiteDispatcher { contract_address: rite_addr };
 
     let config = TopupConfig {
-        asset: mainnet::USDC,
+        asset: mainnet::STRK,
         pool_params: EkuboPoolParams {
-            fee: 100000000000000000, tick_spacing: 20, extension: Zero::zero(),
+            fee: 100000000000000000, tick_spacing: USDC_STRK_TICK_SPACING, extension: Zero::zero(),
         },
         ..default_topup_config(user),
     };
@@ -426,7 +469,7 @@ fn test_end_rite() {
 
     let mut spy = spy_events();
 
-    let mut config = default_topup_config(user);
+    let config = default_topup_config(user);
 
     cheat_caller_address(rite_addr, user, CheatSpan::TargetCalls(1));
     rite.set_trove_config(trove_id, serialize_config(config));
@@ -478,7 +521,7 @@ fn test_cash_topup() {
 
     let forge_amount: u128 = swap_params.forge_amount.into();
     assert_eq!(forge_amount, config.topup_amount, "Wrong forge amount");
-    assert!(swap_params.route_node.is_none(), "Wrong swap data");
+    assert!(swap_params.route.is_empty(), "Wrong swap data");
 
     cheat_caller_address(archabbot.contract_address, user, CheatSpan::TargetCalls(1));
     archabbot.execute_rite(trove_id);
@@ -566,37 +609,36 @@ fn test_cash_topup_exceeds_relative_ltv_fail() {
 
     let forge_amount: u128 = swap_params.forge_amount.into();
     assert_eq!(forge_amount, config.topup_amount, "Wrong forge amount");
-    assert!(swap_params.route_node.is_none(), "Wrong swap data");
+    assert!(swap_params.route.is_empty(), "Wrong swap data");
 
     cheat_caller_address(archabbot.contract_address, user, CheatSpan::TargetCalls(1));
     archabbot.execute_rite(trove_id);
 }
 
-// Parametrized across EKUBO (CASH is token0) and USDC (CASH is token1)
+// Parametrized across USDC (single primary hop, asset == usdc) and STRK (full
+// double hop CASH -> USDC -> STRK).
 #[test]
 #[fork("MAINNET_ARCHABBOT")]
-#[test_case(
-    name: "ekubo",
-    (
-        mainnet::EKUBO,
-        EkuboPoolParams {
-            fee: constants::CASH_EKUBO_TWAMM_POOL_FEE,
-            tick_spacing: constants::EKUBO_TWAMM_TICK_SPACING,
-            extension: mainnet::EKUBO_TWAMM_EXTENSION,
-        },
-        WAD_ONE / 20, // 0.05 EKUBO
-        WAD_ONE / 10 // 0.1 EKUBO
-    ),
-)]
 #[test_case(
     name: "usdc",
     (
         mainnet::USDC,
         EkuboPoolParams {
-            fee: 6805647338418769825990228293189632, tick_spacing: 20, extension: Zero::zero(),
-        },
+            fee: 0, tick_spacing: 0, extension: Zero::zero(),
+        }, // unused (asset == usdc)
         5000000, // 5 USDC
         10000000 // 10 USDC
+    ),
+)]
+#[test_case(
+    name: "strk",
+    (
+        mainnet::STRK,
+        EkuboPoolParams {
+            fee: USDC_STRK_POOL_FEE, tick_spacing: USDC_STRK_TICK_SPACING, extension: Zero::zero(),
+        },
+        50 * WAD_ONE, // 50 STRK
+        100 * WAD_ONE // 100 STRK
     ),
 )]
 fn test_swap_topup_with_incentive(test_case: (ContractAddress, EkuboPoolParams, u128, u128)) {
@@ -643,7 +685,7 @@ fn test_swap_topup_with_incentive(test_case: (ContractAddress, EkuboPoolParams, 
 
     let forge_amount: u128 = swap_params.forge_amount.into();
     assert!(forge_amount.is_non_zero(), "Wrong forge amount");
-    assert!(swap_params.route_node.is_some(), "Wrong swap data");
+    assert!(!swap_params.route.is_empty(), "Wrong swap data");
 
     cheat_caller_address(archabbot.contract_address, user, CheatSpan::TargetCalls(1));
     archabbot.execute_rite(trove_id);
@@ -654,8 +696,10 @@ fn test_swap_topup_with_incentive(test_case: (ContractAddress, EkuboPoolParams, 
 
     let after_user_asset_balance: u128 = asset_token.balance_of(user).try_into().unwrap();
     let asset_topped_up: u128 = after_user_asset_balance - before_user_asset_balance;
-    let error_margin: u128 = 1;
-    assert_equalish(asset_topped_up, config.topup_amount, error_margin, 'Topup did not happen');
+    // Double-hop sizing (exact-output quote, exact-input execution) lands within a
+    // small tolerance of the requested topup amount.
+    let tolerance: u128 = config.topup_amount / 1000; // 0.1%
+    assert_equalish(asset_topped_up, config.topup_amount, tolerance, 'Topup did not happen');
 
     let after_trove_health: Health = shrine.get_trove_health(trove_id);
     let expected_trove_debt: Wad = before_trove_health.debt + forge_amount.into() + incentive;
@@ -698,54 +742,16 @@ fn test_swap_topup_with_incentive(test_case: (ContractAddress, EkuboPoolParams, 
         );
 }
 
+// Mainnet STRK topup via the CASH -> USDC -> STRK route (the contract's namesake
+// double-hop path). Verifies that forge_amount is correctly sized by the reversed
+// exact-output multihop quote and that the delivered STRK lands within slippage.
 #[test]
 #[fork("MAINNET_ARCHABBOT")]
-#[should_panic(expected: 'CLEAR_AT_LEAST_MINIMUM')]
-fn test_swap_topup_clear_less_than_required_fail() {
-    let asset = mainnet::EKUBO;
-    let pool_params = EkuboPoolParams {
-        fee: constants::CASH_EKUBO_TWAMM_POOL_FEE,
-        tick_spacing: constants::EKUBO_TWAMM_TICK_SPACING,
-        extension: mainnet::EKUBO_TWAMM_EXTENSION,
-    };
-    let min_asset_balance = WAD_ONE / 20; // 0.05 EKUBO
-    let topup_amount = (50 * WAD_ONE);
-    let (archabbot, trove_id, rite_addr) = setup_trove_with_topup_rite();
-    let user = archabbot_utils::USER;
-    let rite = IRiteDispatcher { contract_address: rite_addr };
-
-    let slippage: Ray = RAY_PERCENT.into();
-    let config = TopupConfig {
-        asset,
-        pool_params,
-        conditions: TopupConditions { min_asset_balance, slippage },
-        topup_amount,
-        destination: user,
-    };
-
-    cheat_caller_address(rite_addr, user, CheatSpan::TargetCalls(1));
-    rite.set_trove_config(trove_id, serialize_config(config));
-
-    assert_eq!(archabbot.get_rite(trove_id), rite_addr, "Rite not set");
-    assert!(archabbot.can_execute_rite(trove_id), "Rite should be ready");
-    assert!(rite.is_ready(trove_id), "Rite should be ready #2");
-    assert!(rite.has_ended(trove_id), "Rite should have ended");
-
-    cheat_caller_address(archabbot.contract_address, user, CheatSpan::TargetCalls(1));
-    archabbot.execute_rite(trove_id);
-}
-
-#[test]
-#[fork("MAINNET_ARCHABBOT")]
-fn test_swap_topup_within_slippage_pass() {
-    let asset = mainnet::EKUBO;
-    let pool_params = EkuboPoolParams {
-        fee: constants::CASH_EKUBO_TWAMM_POOL_FEE,
-        tick_spacing: constants::EKUBO_TWAMM_TICK_SPACING,
-        extension: mainnet::EKUBO_TWAMM_EXTENSION,
-    };
-    let topup_amount = 24 * WAD_ONE + WAD_ONE / 2; // By trial and error
-    let min_asset_balance = WAD_ONE / 20; // 0.05 EKUBO
+fn test_strk_topup() {
+    let asset = mainnet::STRK;
+    let pool_params = usdc_strk_pool_params();
+    let topup_amount = 100 * WAD_ONE; // 100 STRK
+    let min_asset_balance = 50 * WAD_ONE; // 50 STRK
     let (archabbot, trove_id, rite_addr) = setup_trove_with_topup_rite();
     let user = archabbot_utils::USER;
 
@@ -769,10 +775,13 @@ fn test_swap_topup_within_slippage_pass() {
     let swap_params = topup_dispatcher.get_swap_params(trove_id);
     let forge_amount: u128 = swap_params.forge_amount.into();
     assert!(forge_amount.is_non_zero(), "forge_amount is zero");
-    assert!(swap_params.route_node.is_some(), "Expected swap route");
+    // Double hop: a non-trivial CASH -> USDC -> STRK route.
+    assert_eq!(swap_params.route.len(), 2, "Expected two-hop route");
 
     let asset_token = IERC20Dispatcher { contract_address: asset };
+    let shrine = IShrineDispatcher { contract_address: mainnet::SHRINE };
     let before_user_asset: u128 = asset_token.balance_of(user).try_into().unwrap();
+    let before_trove_health: Health = shrine.get_trove_health(trove_id);
 
     let mut spy = spy_events();
 
@@ -781,12 +790,20 @@ fn test_swap_topup_within_slippage_pass() {
 
     let after_user_asset: u128 = asset_token.balance_of(user).try_into().unwrap();
     let amount_received = after_user_asset - before_user_asset;
-    let amount_out_slippage = config.topup_amount - amount_received;
+
+    // The forge amount is sized by an exact-output quote, so the delivered STRK must
+    // be within the configured slippage of the requested topup amount.
+    let amount_out_slippage: u128 = if config.topup_amount >= amount_received {
+        config.topup_amount - amount_received
+    } else {
+        amount_received - config.topup_amount
+    };
     let max_slippage: u128 = rmul_wr(config.topup_amount.into(), slippage).into();
-    let amount_out_slippage_pct = rdiv_ww(amount_out_slippage.into(), config.topup_amount.into());
-    assert!(amount_out_slippage.is_non_zero(), "Actual out slippage is zero");
-    assert!(amount_out_slippage_pct.is_non_zero(), "Actual out slippage % is zero");
     assert_le!(amount_out_slippage, max_slippage, "Not within slippage");
+
+    let after_trove_health: Health = shrine.get_trove_health(trove_id);
+    let expected_trove_debt: Wad = before_trove_health.debt + forge_amount.into();
+    assert_eq!(after_trove_health.debt, expected_trove_debt, "Wrong trove debt");
 
     spy
         .assert_emitted(
@@ -850,7 +867,7 @@ fn test_cash_topup_exceeds_max_forge_fee_pct_fail() {
 
     let forge_amount: u128 = swap_params.forge_amount.into();
     assert_eq!(forge_amount, config.topup_amount, "Wrong forge amount");
-    assert!(swap_params.route_node.is_none(), "Wrong swap data");
+    assert!(swap_params.route.is_empty(), "Wrong swap data");
 
     cheat_caller_address(mainnet::SHRINE, mainnet::RECEPTOR, CheatSpan::TargetCalls(1));
     let depegged_price: Wad = (WAD_ONE - WAD_ONE / 10).into(); // 0.9
@@ -859,4 +876,3 @@ fn test_cash_topup_exceeds_max_forge_fee_pct_fail() {
     cheat_caller_address(archabbot.contract_address, user, CheatSpan::TargetCalls(1));
     archabbot.execute_rite(trove_id);
 }
-

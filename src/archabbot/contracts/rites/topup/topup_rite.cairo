@@ -1,8 +1,8 @@
-use opus_compose::archabbot::contracts::rites::topup::types::SwapParams;
+use opus_compose::archabbot::contracts::rites::topup::types::MultiHopSwapParams;
 
 #[starknet::interface]
 pub trait ITopupRite<TContractState> {
-    fn get_swap_params(self: @TContractState, trove_id: u64) -> SwapParams;
+    fn get_swap_params(self: @TContractState, trove_id: u64) -> MultiHopSwapParams;
 }
 
 #[starknet::contract]
@@ -21,7 +21,7 @@ pub mod topup_rite {
     use ekubo::types::pool_price::PoolPrice;
     use opus::interfaces::{IAbbotDispatcher, IAbbotDispatcherTrait};
     use opus_compose::archabbot::contracts::rites::topup::constants::{MAX_SLIPPAGE, TWAP_PERIOD};
-    use opus_compose::archabbot::contracts::rites::topup::types::{SwapParams, TopupConfig};
+    use opus_compose::archabbot::contracts::rites::topup::types::{MultiHopSwapParams, TopupConfig};
     use opus_compose::archabbot::contracts::rites::types::{EkuboPoolParams, EkuboPoolParamsTrait};
     use opus_compose::archabbot::contracts::rites::utils::rites_utils;
     use opus_compose::archabbot::interfaces::celebrant::{
@@ -59,12 +59,14 @@ pub mod topup_rite {
         #[substorage(v0)]
         src5: SRC5Component::Storage,
         yin: IERC20Dispatcher,
+        usdc: IERC20Dispatcher,
         archabbot: ICelebrantDispatcher,
         ekubo_core: ICoreDispatcher,
         ekubo_router: IRouterDispatcher,
         ekubo_oracle: IOracleDispatcher,
         // Mapping of trove ID -> topup config
         topup_configs: Map<u64, TopupConfig>,
+        primary_hop_pool_params: EkuboPoolParams,
     }
 
     //
@@ -110,17 +112,22 @@ pub mod topup_rite {
     fn constructor(
         ref self: ContractState,
         yin: ContractAddress,
+        usdc: ContractAddress,
         archabbot: ContractAddress,
         ekubo_router: ContractAddress,
         ekubo_core: ContractAddress,
         ekubo_oracle: ContractAddress,
+        primary_hop_pool_params: EkuboPoolParams,
     ) {
         self.yin.write(IERC20Dispatcher { contract_address: yin });
+        self.usdc.write(IERC20Dispatcher { contract_address: usdc });
         self.archabbot.write(ICelebrantDispatcher { contract_address: archabbot });
 
         self.ekubo_core.write(ICoreDispatcher { contract_address: ekubo_core });
         self.ekubo_router.write(IRouterDispatcher { contract_address: ekubo_router });
         self.ekubo_oracle.write(IOracleDispatcher { contract_address: ekubo_oracle });
+
+        self.primary_hop_pool_params.write(primary_hop_pool_params);
 
         self.src5.register_interface(IRITE_ID);
     }
@@ -140,7 +147,7 @@ pub mod topup_rite {
 
         fn set_trove_config(ref self: ContractState, trove_id: u64, config: Span<felt252>) {
             let mut config = config;
-            let config: TopupConfig = Serde::<TopupConfig>::deserialize(ref config)
+            let mut config: TopupConfig = Serde::<TopupConfig>::deserialize(ref config)
                 .expect('TOPUP: Invalid config');
 
             let user = get_caller_address();
@@ -163,12 +170,23 @@ pub mod topup_rite {
 
             if config.topup_amount.is_non_zero() {
                 let cash = self.yin.read().contract_address;
-                if config.asset != cash {
+                let usdc = self.usdc.read().contract_address;
+                if config.asset != cash && config.asset != usdc {
                     assert!(
                         config.pool_params.tick_spacing.is_non_zero(),
                         "{}: Invalid pool params",
                         RITE_ID(),
                     );
+
+                    // Catch non-existent pools
+                    let _swap_params: MultiHopSwapParams = self
+                        .get_swap_params_helper(
+                            config.pool_params,
+                            config.asset,
+                            config.topup_amount,
+                            config.conditions.slippage,
+                            cash,
+                        );
                 }
                 // Prevent multiple topups
                 // There is an edge case where the minimum asset balance is within the slippage
@@ -180,16 +198,6 @@ pub mod topup_rite {
                     "{}: Topup amount less than minimum",
                     RITE_ID(),
                 );
-
-                // Catch non-existent pools
-                let _swap_params: SwapParams = self
-                    .get_swap_params_helper(
-                        config.pool_params,
-                        config.asset,
-                        config.topup_amount,
-                        config.conditions.slippage,
-                        cash,
-                    );
             }
 
             self.topup_configs.write(trove_id, config);
@@ -223,8 +231,8 @@ pub mod topup_rite {
 
             let config = self.topup_configs.read(trove_id);
             let yin = self.yin.read();
-            let SwapParams {
-                forge_amount, route_node,
+            let MultiHopSwapParams {
+                forge_amount, route,
             } =
                 self
                     .get_swap_params_helper(
@@ -238,13 +246,13 @@ pub mod topup_rite {
             archabbot.on_rite_actions(trove_id, array![Action::Forge(forge_amount)].span());
 
             let mut amount_received = config.topup_amount;
-            if let Some(route_node) = route_node {
+            if !route.is_empty() {
                 let ekubo_router = self.ekubo_router.read();
                 let forge_amount: u128 = forge_amount.into();
                 yin.transfer(ekubo_router.contract_address, forge_amount.into());
                 ekubo_router
-                    .swap(
-                        route_node,
+                    .multihop_swap(
+                        route,
                         TokenAmount { token: yin.contract_address, amount: forge_amount.into() },
                     );
 
@@ -295,7 +303,7 @@ pub mod topup_rite {
 
     #[abi(embed_v0)]
     pub impl ITopupRiteImpl of ITopupRite<ContractState> {
-        fn get_swap_params(self: @ContractState, trove_id: u64) -> SwapParams {
+        fn get_swap_params(self: @ContractState, trove_id: u64) -> MultiHopSwapParams {
             let config = self.topup_configs.read(trove_id);
             let cash = self.yin.read().contract_address;
             self
@@ -318,54 +326,107 @@ pub mod topup_rite {
             topup_amount: u128,
             slippage: Ray,
             cash: ContractAddress,
-        ) -> SwapParams {
+        ) -> MultiHopSwapParams {
             if asset == cash {
-                SwapParams { forge_amount: topup_amount.into(), route_node: Option::None }
-            } else {
-                let pool_key: PoolKey = pool_params.into_pool_key(asset, cash);
-                let ekubo_core = self.ekubo_core.read();
-                let ekubo_router = self.ekubo_router.read();
+                return MultiHopSwapParams { forge_amount: topup_amount.into(), route: array![] };
+            }
 
-                let pool_price: PoolPrice = ekubo_core.get_pool_price(pool_key);
-                // Catches invalid pools
-                assert!(pool_price.sqrt_ratio.is_non_zero(), "{}: Pool price is zero", RITE_ID());
+            let ekubo_core = self.ekubo_core.read();
+            let ekubo_router = self.ekubo_router.read();
+            let ekubo_oracle = self.ekubo_oracle.read();
+            let usdc = self.usdc.read().contract_address;
 
-                // Use TWAP-derived sqrt_ratio for the limit to resist spot price manipulation.
-                // The forge amount is still sized from the spot-price quote; only the limit
-                // (which bounds the swap's worst-case execution price) is anchored to the TWAP.
-                let twap_tick = self
-                    .ekubo_oracle
-                    .read()
-                    .get_average_tick_over_last(pool_key.token0, pool_key.token1, TWAP_PERIOD);
-                let twap_sqrt_ratio: u256 = tick_to_sqrt_ratio(twap_tick);
+            let primary_hop_pool_key: PoolKey = self
+                .primary_hop_pool_params
+                .read()
+                .into_pool_key(cash, usdc);
+            let cash_is_token0: bool = primary_hop_pool_key.token0 == cash;
 
-                let cash_is_token0: bool = pool_key.token0 == cash;
-                let sqrt_ratio_limit = calculate_sqrt_ratio_limit(
-                    twap_sqrt_ratio, slippage, cash_is_token0,
+            // Use TWAP-derived sqrt_ratio for the limit to resist spot price manipulation.
+            // The forge amount is still sized from the spot-price quote; only the limit
+            // (which bounds the swap's worst-case execution price) is anchored to the TWAP.
+            let primary_hop_twap_tick = ekubo_oracle
+                .get_average_tick_over_last(
+                    primary_hop_pool_key.token0, primary_hop_pool_key.token1, TWAP_PERIOD,
                 );
-                let route_node = RouteNode { pool_key, sqrt_ratio_limit, skip_ahead: 0 };
+            let primary_hop_twap_sqrt_ratio: u256 = tick_to_sqrt_ratio(primary_hop_twap_tick);
+            let primary_hop_sqrt_ratio_limit = calculate_sqrt_ratio_limit(
+                primary_hop_twap_sqrt_ratio, slippage, cash_is_token0,
+            );
+            let primary_hop_route_node = RouteNode {
+                pool_key: primary_hop_pool_key,
+                sqrt_ratio_limit: primary_hop_sqrt_ratio_limit,
+                skip_ahead: 0,
+            };
+
+            let mut execution_route: Array<RouteNode> = array![primary_hop_route_node];
+            let mut primary_hop_quote_delta: Delta = Zero::zero();
+
+            if asset == usdc {
                 // Set amount to negative for exact output swap i.e. amount you want to get out of
                 // the pool
                 let exact_output_token_amount = TokenAmount {
                     token: asset, amount: -(topup_amount.into()),
                 };
-                let quote_delta: Delta = ekubo_router
-                    .quote_swap(route_node, exact_output_token_amount);
-                // Switch amount to positive for exact input swap
-                // i.e. amount you need/want to provide to the pool
-                // There may be a negligible discrepancy due to AMM rounding depending on the
-                // number of ticks crossed. No workarounds are implemented to guarantee the exact
-                // topup amount to the smallest decimal so as to preserve the simplicity and
-                // efficiency of the existing flow.
-                let cash_amount: u128 = if cash_is_token0 {
-                    quote_delta.amount0.try_into().unwrap()
-                } else {
-                    quote_delta.amount1.try_into().unwrap()
+                // Quote route is the same as execution route for single hop swap in a multihop
+                // quote
+                let quote_route = execution_route.clone();
+                let mut quote_delta = ekubo_router
+                    .quote_multihop_swap(quote_route, exact_output_token_amount);
+                primary_hop_quote_delta = quote_delta.pop_front().unwrap();
+            } else {
+                let second_hop_pool_key: PoolKey = pool_params.into_pool_key(usdc, asset);
+                let second_hop_pool_price: PoolPrice = ekubo_core
+                    .get_pool_price(second_hop_pool_key);
+                // Catches invalid ASSET/USDC pools at execution time
+                assert!(
+                    second_hop_pool_price.sqrt_ratio.is_non_zero(),
+                    "{}: Pool price is zero",
+                    RITE_ID(),
+                );
+
+                let twap_tick = ekubo_oracle
+                    .get_average_tick_over_last(
+                        second_hop_pool_key.token0, second_hop_pool_key.token1, TWAP_PERIOD,
+                    );
+                let twap_sqrt_ratio: u256 = tick_to_sqrt_ratio(twap_tick);
+
+                let usdc_is_token0: bool = second_hop_pool_key.token0 == usdc;
+                let sqrt_ratio_limit = calculate_sqrt_ratio_limit(
+                    twap_sqrt_ratio, slippage, usdc_is_token0,
+                );
+                let second_hop_route_node = RouteNode {
+                    pool_key: second_hop_pool_key, sqrt_ratio_limit, skip_ahead: 0,
                 };
-                SwapParams {
-                    forge_amount: cash_amount.into(), route_node: Option::Some(route_node),
-                }
+
+                // Execution route is forward (exact-input): CASH -> USDC -> asset.
+                execution_route.append(second_hop_route_node);
+
+                // The quote is exact-output (deliver `topup_amount` of `asset`), so by Ekubo's
+                // convention the route must be passed in REVERSE — the output token (`asset`)
+                // must be in the FIRST node.
+                let exact_output_token_amount = TokenAmount {
+                    token: asset, amount: -(topup_amount.into()),
+                };
+                let quote_route = array![second_hop_route_node, primary_hop_route_node];
+                let quote_delta: Array<Delta> = ekubo_router
+                    .quote_multihop_swap(quote_route, exact_output_token_amount);
+                // Deltas are returned in processing order [second, primary].
+                primary_hop_quote_delta = *quote_delta.at(1);
             }
+            // Switch amount to positive for exact input swap
+            // i.e. amount you need/want to provide to the pool
+            // There may be a discrepancy due to AMM rounding depending on the number of ticks
+            // crossed. No workarounds are implemented to guarantee the exact topup amount to
+            // the smallest decimal so as to preserve the simplicity and efficiency of the
+            // existing flow.
+            let cash_amount: u128 = if cash_is_token0 {
+                primary_hop_quote_delta.amount0.try_into().unwrap()
+            } else {
+                primary_hop_quote_delta.amount1.try_into().unwrap()
+            };
+
+            MultiHopSwapParams { forge_amount: cash_amount.into(), route: execution_route }
         }
     }
 
