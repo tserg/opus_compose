@@ -1,5 +1,4 @@
 pub mod addresses;
-pub mod constants;
 pub mod shared {
     pub mod components {
         pub mod reentrancy_guard;
